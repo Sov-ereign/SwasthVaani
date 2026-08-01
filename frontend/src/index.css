@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Figtree:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 35 30% 94%;
+        --foreground: 33 8% 23%;
+        --card: 0 0% 100%;
+        --card-foreground: 33 8% 23%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 33 8% 23%;
+        --primary: 19 50% 57%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 130 16% 49%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 35 20% 90%;
+        --muted-foreground: 33 8% 45%;
+        --accent: 40 68% 55%;
+        --accent-foreground: 0 0% 15%;
+        --destructive: 0 52% 46%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 35 15% 85%;
+        --input: 35 15% 85%;
+        --ring: 19 50% 57%;
+        --radius: 0.75rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+        font-family: 'Figtree', sans-serif;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    .font-head {
+        font-family: 'Manrope', sans-serif;
+    }
+}
+
+.grain-bg {
+    background-image: radial-gradient(hsl(35 25% 88%) 1px, transparent 1px);
+    background-size: 22px 22px;
+}
+
+::selection {
+    background: hsl(19 50% 57%);
+    color: white;
+}
