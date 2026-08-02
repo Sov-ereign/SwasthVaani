@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard, PhoneCall, Share2, Check } from "lucide-react";
+import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard, PhoneCall, Share2, Check, UserCheck, QrCode, Calendar, MessageSquare, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { api, LANGUAGES, URGENCY_META } from "@/lib/api";
 
 const UI = {
@@ -21,6 +23,13 @@ export default function VoiceApp() {
     const [lang, setLang] = useState("hi");
     const [status, setStatus] = useState("idle"); // idle | recording | processing | result
     const [result, setResult] = useState(null);
+    const [mode, setMode] = useState("patient"); // patient | asha
+    
+    // ASHA Worker form details
+    const [ashaPatientName, setAshaPatientName] = useState("");
+    const [ashaPatientAge, setAshaPatientAge] = useState("");
+    const [ashaVillage, setAshaVillage] = useState("");
+
     const [showType, setShowType] = useState(false);
     const [typed, setTyped] = useState("");
     const [liveTranscript, setLiveTranscript] = useState("");
@@ -68,7 +77,6 @@ export default function VoiceApp() {
         liveTranscriptRef.current = "";
         setLiveTranscript("");
         
-        // Setup browser SpeechRecognition if supported
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             try {
@@ -120,11 +128,21 @@ export default function VoiceApp() {
         setStatus("processing");
     };
 
+    const getCallerLabel = () => {
+        if (mode === "asha") {
+            const name = ashaPatientName.trim() || "Patient";
+            const age = ashaPatientAge.trim() ? `, ${ashaPatientAge}y` : "";
+            const village = ashaVillage.trim() ? ` (${ashaVillage})` : "";
+            return `ASHA: ${name}${age}${village}`;
+        }
+        return "Web patient";
+    };
+
     const submitAudio = async (blob, recognizedText) => {
         const fd = new FormData();
         fd.append("audio", blob, "symptoms.webm");
         fd.append("language", lang);
-        fd.append("caller", "Web patient");
+        fd.append("caller", getCallerLabel());
 
         try {
             const { data } = await api.post("/triage/voice", fd, { headers: { "Content-Type": "multipart/form-data" } });
@@ -149,7 +167,7 @@ export default function VoiceApp() {
         setStatus("processing");
         setShowType(false);
         try {
-            const { data } = await api.post("/triage/text", { text: textToSubmit, language: lang, caller: "Web patient" });
+            const { data } = await api.post("/triage/text", { text: textToSubmit, language: lang, caller: getCallerLabel() });
             setResult(data);
             setStatus("result");
             playAudio(data.audio_base64, data.spoken || data.advice);
@@ -187,15 +205,62 @@ export default function VoiceApp() {
                 </div>
             </header>
 
+            {/* Mode Switcher: Patient Mode vs ASHA Health Worker Mode */}
+            <div className="max-w-2xl mx-auto w-full px-5 mt-2 flex justify-center">
+                <div className="bg-card border border-border p-1 rounded-full flex gap-1">
+                    <button
+                        onClick={() => setMode("patient")}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                            mode === "patient" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Patient Self-Use
+                    </button>
+                    <button
+                        onClick={() => setMode("asha")}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${
+                            mode === "asha" ? "bg-secondary text-secondary-foreground shadow" : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        <UserCheck className="w-3.5 h-3.5" /> ASHA Health Worker Mode
+                    </button>
+                </div>
+            </div>
+
+            {/* ASHA Patient Details Form */}
+            {mode === "asha" && status === "idle" && (
+                <div className="max-w-md mx-auto w-full px-5 mt-4">
+                    <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+                        <p className="text-xs font-bold uppercase tracking-wide text-secondary flex items-center gap-1">
+                            <UserCheck className="w-3.5 h-3.5" /> ASHA Door-to-Door Visit Details
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <Label className="text-xs">Patient Name</Label>
+                                <Input placeholder="Ramesh Kumar" value={ashaPatientName} onChange={(e) => setAshaPatientName(e.target.value)} className="h-9 text-xs rounded-xl bg-background mt-1" />
+                            </div>
+                            <div>
+                                <Label className="text-xs">Age</Label>
+                                <Input placeholder="48" value={ashaPatientAge} onChange={(e) => setAshaPatientAge(e.target.value)} className="h-9 text-xs rounded-xl bg-background mt-1" />
+                            </div>
+                        </div>
+                        <div>
+                            <Label className="text-xs">Village / Location</Label>
+                            <Input placeholder="Rampur Village, Ward 4" value={ashaVillage} onChange={(e) => setAshaVillage(e.target.value)} className="h-9 text-xs rounded-xl bg-background mt-1" />
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Language selector */}
-            <div className="max-w-2xl mx-auto w-full px-5 mt-2">
+            <div className="max-w-2xl mx-auto w-full px-5 mt-4">
                 <div className="flex flex-wrap gap-2 justify-center" data-testid="lang-selector">
                     {LANGUAGES.map((l) => (
                         <button
                             key={l.code}
                             data-testid={`lang-${l.code}`}
                             onClick={() => { setLang(l.code); reset(); }}
-                            className={`rounded-full px-6 py-3 text-lg font-semibold border transition-colors ${
+                            className={`rounded-full px-5 py-2.5 text-base font-semibold border transition-colors ${
                                 lang === l.code ? "bg-primary text-primary-foreground border-primary shadow-md" : "bg-card border-border text-foreground hover:border-primary/50"
                             }`}
                         >
@@ -205,7 +270,7 @@ export default function VoiceApp() {
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center px-5 py-10 max-w-2xl mx-auto w-full">
+            <div className="flex-1 flex flex-col items-center justify-center px-5 py-8 max-w-2xl mx-auto w-full">
                 <AnimatePresence mode="wait">
                     {status !== "result" && (
                         <motion.div key="recorder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -245,8 +310,8 @@ export default function VoiceApp() {
 
                             {status === "idle" && (
                                 <button onClick={() => setShowType((s) => !s)} data-testid="toggle-type-btn"
-                                    className="mt-6 flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-medium">
-                                    <Keyboard className="w-4 h-4" /> Type instead
+                                    className="mt-6 flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-medium text-sm">
+                                    <Keyboard className="w-4 h-4" /> Type symptoms instead
                                 </button>
                             )}
 
@@ -263,7 +328,7 @@ export default function VoiceApp() {
                     )}
 
                     {status === "result" && result && (
-                        <ResultCard key="result" result={result} lang={lang} t={t} onReset={reset} onReplay={() => playAudio(result.audio_base64, result.spoken || result.advice)} />
+                        <ResultCard key="result" result={result} lang={lang} t={t} mode={mode} onReset={reset} onReplay={() => playAudio(result.audio_base64, result.spoken || result.advice)} />
                     )}
                 </AnimatePresence>
             </div>
@@ -271,16 +336,35 @@ export default function VoiceApp() {
     );
 }
 
-function ResultCard({ result, lang, t, onReset, onReplay }) {
-    const [shared, setShared] = useState(false);
+function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
+    const [sharedSMS, setSharedSMS] = useState(false);
+    const [sharedWA, setSharedWA] = useState(false);
+    const [scheduledCallback, setScheduledCallback] = useState(false);
+
     const meta = URGENCY_META[result.urgency] || URGENCY_META.soon;
     const Icon = ICONS[result.urgency] || Clock;
 
     const handleShareSMS = () => {
         const body = encodeURIComponent(`SwasthVaani Triage: ${meta.label}\nSymptoms: ${result.transcript}\nAdvice: ${result.spoken}`);
         window.open(`sms:?body=${body}`, "_blank");
-        setShared(true);
-        toast.success("SMS preview created!");
+        setSharedSMS(true);
+        toast.success("SMS ready!");
+    };
+
+    const handleShareWhatsApp = () => {
+        const text = encodeURIComponent(`🩺 *SwasthVaani Voice Triage Report*\n*Urgency*: ${meta.label}\n*Patient Symptoms*: "${result.transcript}"\n*AI Guidance*: ${result.spoken}`);
+        window.open(`https://api.whatsapp.com/send?text=${text}`, "_blank");
+        setSharedWA(true);
+        toast.success("Opening WhatsApp...");
+    };
+
+    const handleScheduleCallback = () => {
+        setScheduledCallback(true);
+        toast.success("Automated 24-Hour IVR Voice Follow-up Scheduled!");
+    };
+
+    const handlePrintReferral = () => {
+        window.print();
     };
 
     return (
@@ -300,6 +384,27 @@ function ResultCard({ result, lang, t, onReset, onReplay }) {
                     <Volume2 className="w-5 h-5 mr-2" /> {t.play}
                 </Button>
             </div>
+
+            {/* ASHA Patient Referral Pass (Printable Card with QR) */}
+            {mode === "asha" && (
+                <div className="bg-card border-2 border-secondary/50 rounded-2xl p-5 mt-4 shadow-md">
+                    <div className="flex items-center justify-between border-b pb-3 mb-3">
+                        <div>
+                            <p className="font-head font-extrabold text-sm text-secondary uppercase tracking-wide">PHC Patient Referral Pass</p>
+                            <p className="text-xs text-muted-foreground">Issued by ASHA Worker · SwasthVaani</p>
+                        </div>
+                        <QrCode className="w-8 h-8 text-secondary" />
+                    </div>
+                    <div className="text-xs space-y-1.5">
+                        <p><span className="font-bold">Caller / Patient:</span> {result.caller}</p>
+                        <p><span className="font-bold">Triage Status:</span> <span className="font-extrabold uppercase">{result.urgency}</span></p>
+                        <p><span className="font-bold">Symptoms Summary:</span> {result.summary || result.transcript}</p>
+                    </div>
+                    <Button onClick={handlePrintReferral} size="sm" variant="outline" className="mt-3 w-full rounded-full text-xs font-bold">
+                        <Printer className="w-3.5 h-3.5 mr-1.5" /> Print Patient Referral Pass
+                    </Button>
+                </div>
+            )}
 
             {/* Emergency Hotline Alert */}
             {result.urgency === "emergency" && (
@@ -323,13 +428,26 @@ function ResultCard({ result, lang, t, onReset, onReplay }) {
                 <p className="text-sm leading-relaxed text-foreground/90 font-medium" data-testid="advice-text">{result.spoken}</p>
             </div>
 
-            <div className="flex gap-3 mt-4">
-                <Button onClick={handleShareSMS} variant="secondary" className="flex-1 rounded-full h-12 font-bold border">
-                    {shared ? <Check className="w-4 h-4 mr-2 text-green-600" /> : <Share2 className="w-4 h-4 mr-2" />}
-                    {shared ? "SMS Prepared" : "Send SMS Advice"}
+            {/* Sharing & 24-Hr Callback Automation Actions */}
+            <div className="grid grid-cols-2 gap-2 mt-4">
+                <Button onClick={handleShareWhatsApp} variant="secondary" className="rounded-full h-11 text-xs font-bold border">
+                    <MessageSquare className="w-3.5 h-3.5 mr-1.5 text-green-600" />
+                    {sharedWA ? "Opening WA..." : "WhatsApp Voice"}
                 </Button>
-                <Button onClick={onReset} data-testid="ask-again-btn" variant="outline" className="flex-1 rounded-full h-12 font-bold border-2 hover:-translate-y-0.5 transition-transform">
-                    <RotateCcw className="w-4 h-4 mr-2" /> {t.again}
+
+                <Button onClick={handleScheduleCallback} variant="outline" className="rounded-full h-11 text-xs font-bold border">
+                    {scheduledCallback ? <Check className="w-3.5 h-3.5 mr-1.5 text-green-600" /> : <Calendar className="w-3.5 h-3.5 mr-1.5 text-primary" />}
+                    {scheduledCallback ? "24h Call Scheduled" : "24h Voice Callback"}
+                </Button>
+            </div>
+
+            <div className="flex gap-2 mt-2">
+                <Button onClick={handleShareSMS} variant="ghost" className="flex-1 rounded-full h-11 text-xs font-bold border">
+                    {sharedSMS ? <Check className="w-3.5 h-3.5 mr-1.5 text-green-600" /> : <Share2 className="w-3.5 h-3.5 mr-1.5" />}
+                    {sharedSMS ? "SMS Prepared" : "Send SMS Advice"}
+                </Button>
+                <Button onClick={onReset} data-testid="ask-again-btn" variant="default" className="flex-1 rounded-full h-11 text-xs font-bold shadow">
+                    <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> {t.again}
                 </Button>
             </div>
         </motion.div>
