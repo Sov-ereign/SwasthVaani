@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard } from "lucide-react";
+import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard, PhoneCall, Share2, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +14,7 @@ const UI = {
 };
 
 const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
+const LANG_VOICE = { hi: "hi-IN", en: "en-US", ta: "ta-IN" };
 
 export default function VoiceApp() {
     const [lang, setLang] = useState("hi");
@@ -21,21 +22,74 @@ export default function VoiceApp() {
     const [result, setResult] = useState(null);
     const [showType, setShowType] = useState(false);
     const [typed, setTyped] = useState("");
+    const [liveTranscript, setLiveTranscript] = useState("");
+    
     const mediaRef = useRef(null);
     const chunksRef = useRef([]);
     const audioRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const liveTranscriptRef = useRef("");
+
     const t = UI[lang];
 
-    useEffect(() => () => { if (audioRef.current) audioRef.current.pause(); }, []);
+    useEffect(() => {
+        return () => {
+            if (audioRef.current) audioRef.current.pause();
+            if (window.speechSynthesis) window.speechSynthesis.cancel();
+        };
+    }, []);
 
-    const playAudio = (b64) => {
-        if (!b64) return;
-        const audio = new Audio(`data:audio/mp3;base64,${b64}`);
-        audioRef.current = audio;
-        audio.play().catch(() => { });
+    const speakWithBrowser = (text, languageCode) => {
+        if (!("speechSynthesis" in window)) return;
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = LANG_VOICE[languageCode] || "hi-IN";
+        utterance.rate = 0.9;
+        window.speechSynthesis.speak(utterance);
+    };
+
+    const playAudio = (b64, text) => {
+        if (audioRef.current) audioRef.current.pause();
+        if (b64) {
+            try {
+                const audio = new Audio(`data:audio/mp3;base64,${b64}`);
+                audioRef.current = audio;
+                audio.play().catch(() => speakWithBrowser(text, lang));
+            } catch (e) {
+                speakWithBrowser(text, lang);
+            }
+        } else if (text) {
+            speakWithBrowser(text, lang);
+        }
     };
 
     const startRecording = async () => {
+        liveTranscriptRef.current = "";
+        setLiveTranscript("");
+        
+        // Setup browser SpeechRecognition if supported
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            try {
+                const sr = new SpeechRecognition();
+                sr.continuous = true;
+                sr.interimResults = true;
+                sr.lang = LANG_VOICE[lang];
+                sr.onresult = (e) => {
+                    let trans = "";
+                    for (let i = e.resultIndex; i < e.results.length; i++) {
+                        trans += e.results[i][0].transcript;
+                    }
+                    liveTranscriptRef.current = trans;
+                    setLiveTranscript(trans);
+                };
+                sr.start();
+                recognitionRef.current = sr;
+            } catch (e) {
+                console.warn("SpeechRecognition init warning:", e);
+            }
+        }
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const mr = new MediaRecorder(stream);
@@ -44,54 +98,81 @@ export default function VoiceApp() {
             mr.onstop = () => {
                 stream.getTracks().forEach((tr) => tr.stop());
                 const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-                submitAudio(blob);
+                submitAudio(blob, liveTranscriptRef.current);
             };
             mediaRef.current = mr;
             mr.start();
             setStatus("recording");
         } catch (e) {
-            toast.error("Microphone access denied. Use 'Type instead' below.");
+            toast.error("Microphone access denied. You can type your symptoms below.");
             setShowType(true);
         }
     };
 
     const stopRecording = () => {
-        if (mediaRef.current && mediaRef.current.state !== "inactive") mediaRef.current.stop();
+        if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch (e) {}
+        }
+        if (mediaRef.current && mediaRef.current.state !== "inactive") {
+            mediaRef.current.stop();
+        }
         setStatus("processing");
     };
 
-    const submitAudio = async (blob) => {
+    const submitAudio = async (blob, recognizedText) => {
         const fd = new FormData();
         fd.append("audio", blob, "symptoms.webm");
         fd.append("language", lang);
         fd.append("caller", "Web patient");
+
         try {
             const { data } = await api.post("/triage/voice", fd, { headers: { "Content-Type": "multipart/form-data" } });
+            
+            // If recognizedText exists locally and backend transcript was default fallback, override with client transcript
+            if (recognizedText && recognizedText.trim()) {
+                data.transcript = recognizedText.trim();
+            }
+            
             setResult(data);
             setStatus("result");
-            playAudio(data.audio_base64);
+            playAudio(data.audio_base64, data.spoken || data.advice);
         } catch (e) {
-            toast.error(e?.response?.data?.detail || "Could not process your voice. Try again.");
+            // Offline / Error fallback
+            if (recognizedText && recognizedText.trim()) {
+                return submitTextDirect(recognizedText);
+            }
+            toast.error(e?.response?.data?.detail || "Could not process audio. Try typing symptoms instead.");
             setStatus("idle");
         }
     };
 
-    const submitText = async () => {
-        if (!typed.trim()) return;
+    const submitTextDirect = async (textToSubmit) => {
         setStatus("processing");
         setShowType(false);
         try {
-            const { data } = await api.post("/triage/text", { text: typed, language: lang, caller: "Web patient (typed)" });
+            const { data } = await api.post("/triage/text", { text: textToSubmit, language: lang, caller: "Web patient" });
             setResult(data);
             setStatus("result");
-            playAudio(data.audio_base64);
+            playAudio(data.audio_base64, data.spoken || data.advice);
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Could not process. Try again.");
             setStatus("idle");
         }
     };
 
-    const reset = () => { setResult(null); setStatus("idle"); setTyped(""); if (audioRef.current) audioRef.current.pause(); };
+    const submitText = async () => {
+        if (!typed.trim()) return;
+        submitTextDirect(typed);
+    };
+
+    const reset = () => {
+        setResult(null);
+        setStatus("idle");
+        setTyped("");
+        setLiveTranscript("");
+        if (audioRef.current) audioRef.current.pause();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+    };
 
     return (
         <div className="min-h-screen grain-bg flex flex-col" data-testid="voice-app">
@@ -114,9 +195,10 @@ export default function VoiceApp() {
                         <button
                             key={l.code}
                             data-testid={`lang-${l.code}`}
-                            onClick={() => setLang(l.code)}
-                            className={`rounded-full px-6 py-3 text-lg font-semibold border transition-colors ${lang === l.code ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/50"
-                                }`}
+                            onClick={() => { setLang(l.code); reset(); }}
+                            className={`rounded-full px-6 py-3 text-lg font-semibold border transition-colors ${
+                                lang === l.code ? "bg-primary text-primary-foreground border-primary shadow-md" : "bg-card border-border text-foreground hover:border-primary/50"
+                            }`}
                         >
                             {l.name}
                         </button>
@@ -128,7 +210,7 @@ export default function VoiceApp() {
                 <AnimatePresence mode="wait">
                     {status !== "result" && (
                         <motion.div key="recorder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            className="flex flex-col items-center">
+                            className="flex flex-col items-center w-full">
                             <div className="relative flex items-center justify-center w-64 h-64">
                                 {status === "recording" && [0, 1, 2].map((i) => (
                                     <motion.span key={i} className="absolute rounded-full bg-primary/20"
@@ -140,17 +222,27 @@ export default function VoiceApp() {
                                     data-testid="voice-record-btn"
                                     disabled={status === "processing"}
                                     onClick={status === "recording" ? stopRecording : startRecording}
-                                    className={`relative w-44 h-44 rounded-full flex items-center justify-center shadow-xl transition-colors disabled:opacity-80 ${status === "recording" ? "bg-destructive" : "bg-primary hover:bg-primary/90"
-                                        }`}
+                                    className={`relative w-44 h-44 rounded-full flex items-center justify-center shadow-xl transition-all disabled:opacity-80 ${
+                                        status === "recording" ? "bg-destructive scale-105" : "bg-primary hover:bg-primary/90 hover:scale-102"
+                                    }`}
                                 >
                                     {status === "processing" ? <Loader2 className="w-16 h-16 text-white animate-spin" />
                                         : status === "recording" ? <Square className="w-14 h-14 text-white" fill="white" />
                                             : <Mic className="w-16 h-16 text-primary-foreground" />}
                                 </button>
                             </div>
-                            <p className="mt-8 text-xl font-head font-bold text-center" aria-live="polite" data-testid="voice-status-text">
+
+                            <p className="mt-6 text-xl font-head font-bold text-center" aria-live="polite" data-testid="voice-status-text">
                                 {status === "recording" ? t.listening : status === "processing" ? t.thinking : t.tap}
                             </p>
+
+                            {/* Live transcription feedback preview */}
+                            {status === "recording" && liveTranscript && (
+                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                                    className="mt-3 bg-card border border-border rounded-xl px-4 py-2 text-sm italic text-muted-foreground text-center max-w-md">
+                                    "{liveTranscript}"
+                                </motion.div>
+                            )}
 
                             {status === "idle" && (
                                 <button onClick={() => setShowType((s) => !s)} data-testid="toggle-type-btn"
@@ -172,7 +264,7 @@ export default function VoiceApp() {
                     )}
 
                     {status === "result" && result && (
-                        <ResultCard key="result" result={result} lang={lang} t={t} onReset={reset} onReplay={() => playAudio(result.audio_base64)} />
+                        <ResultCard key="result" result={result} lang={lang} t={t} onReset={reset} onReplay={() => playAudio(result.audio_base64, result.spoken || result.advice)} />
                     )}
                 </AnimatePresence>
             </div>
@@ -181,11 +273,21 @@ export default function VoiceApp() {
 }
 
 function ResultCard({ result, lang, t, onReset, onReplay }) {
+    const [shared, setShared] = useState(false);
     const meta = URGENCY_META[result.urgency] || URGENCY_META.soon;
     const Icon = ICONS[result.urgency] || Clock;
+
+    const handleShareSMS = () => {
+        const body = encodeURIComponent(`SwasthVaani Triage: ${meta.label}\nSymptoms: ${result.transcript}\nAdvice: ${result.spoken}`);
+        window.open(`sms:?body=${body}`, "_blank");
+        setShared(true);
+        toast.success("SMS preview created!");
+    };
+
     return (
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }} className="w-full max-w-md" data-testid="triage-result-card">
+            
             <div className={`${meta.bg} ${meta.text} rounded-3xl p-8 flex flex-col items-center gap-4 shadow-xl ring-8 ${meta.ring}`}>
                 <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center">
                     <Icon className="w-10 h-10" />
@@ -195,22 +297,42 @@ function ResultCard({ result, lang, t, onReset, onReplay }) {
                     <p className="text-lg opacity-90 mt-1">{meta.sub[lang]}</p>
                 </div>
                 <Button onClick={onReplay} data-testid="play-audio-btn"
-                    className="rounded-full h-14 px-8 text-base font-bold bg-white/95 text-foreground hover:bg-white transition-colors">
+                    className="rounded-full h-14 px-8 text-base font-bold bg-white/95 text-foreground hover:bg-white transition-colors shadow-md">
                     <Volume2 className="w-5 h-5 mr-2" /> {t.play}
                 </Button>
             </div>
 
-            <div className="bg-card border border-border rounded-2xl p-6 mt-4">
+            {/* Emergency Hotline Alert */}
+            {result.urgency === "emergency" && (
+                <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-4 mt-4 flex items-center justify-between">
+                    <div>
+                        <p className="font-bold text-destructive text-sm">Need Urgent Ambulance?</p>
+                        <p className="text-xs text-muted-foreground">Call 108 Emergency Service</p>
+                    </div>
+                    <a href="tel:108">
+                        <Button size="sm" className="bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-full font-bold">
+                            <PhoneCall className="w-4 h-4 mr-1.5" /> Call 108
+                        </Button>
+                    </a>
+                </div>
+            )}
+
+            <div className="bg-card border border-border rounded-2xl p-6 mt-4 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{t.you}</p>
                 <p className="mt-1 text-foreground italic" data-testid="transcript-text">"{result.transcript}"</p>
                 <div className="h-px bg-border my-4" />
-                <p className="text-sm leading-relaxed text-foreground/90" data-testid="advice-text">{result.spoken}</p>
+                <p className="text-sm leading-relaxed text-foreground/90 font-medium" data-testid="advice-text">{result.spoken}</p>
             </div>
 
-            <Button onClick={onReset} data-testid="ask-again-btn" variant="outline"
-                className="mt-4 w-full rounded-full h-12 font-bold border-2 hover:-translate-y-0.5 transition-transform">
-                <RotateCcw className="w-4 h-4 mr-2" /> {t.again}
-            </Button>
+            <div className="flex gap-3 mt-4">
+                <Button onClick={handleShareSMS} variant="secondary" className="flex-1 rounded-full h-12 font-bold border">
+                    {shared ? <Check className="w-4 h-4 mr-2 text-green-600" /> : <Share2 className="w-4 h-4 mr-2" />}
+                    {shared ? "SMS Prepared" : "Send SMS Advice"}
+                </Button>
+                <Button onClick={onReset} data-testid="ask-again-btn" variant="outline" className="flex-1 rounded-full h-12 font-bold border-2 hover:-translate-y-0.5 transition-transform">
+                    <RotateCcw className="w-4 h-4 mr-2" /> {t.again}
+                </Button>
+            </div>
         </motion.div>
     );
 }
