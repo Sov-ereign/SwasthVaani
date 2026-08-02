@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mic, Phone, Activity, ShieldCheck, Languages, ArrowRight, Stethoscope, Radio, HeartPulse, Sparkles, UserCheck, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 const fade = (d = 0) => ({
     initial: { opacity: 0, y: 24 },
