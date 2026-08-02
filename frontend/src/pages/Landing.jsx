@@ -38,7 +38,7 @@ export default function Landing() {
             <section className="max-w-6xl mx-auto px-5 pt-16 pb-20 grid lg:grid-cols-2 gap-14 items-center">
                 <div>
                     <motion.div {...fade(0)} className="inline-flex items-center gap-2 rounded-full bg-secondary/15 text-secondary px-4 py-1.5 text-sm font-semibold mb-6">
-                        <Languages className="w-4 h-4" /> Hindi · English · Tamil
+                        <Languages className="w-4 h-4" /> Hindi · English · Bengali · Tamil
                     </motion.div>
                     <motion.h1 {...fade(0.05)} className="font-head font-extrabold tracking-tight text-4xl sm:text-5xl lg:text-6xl leading-[1.05]">
                         Healthcare that <span className="text-primary">listens</span>, not one that asks you to read.

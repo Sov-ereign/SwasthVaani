@@ -14,13 +14,14 @@ api.interceptors.request.use((config) => {
 export const LANGUAGES = [
     { code: "hi", name: "हिंदी", en: "Hindi" },
     { code: "en", name: "English", en: "English" },
+    { code: "bn", name: "বাংলা", en: "Bengali" },
     { code: "ta", name: "தமிழ்", en: "Tamil" },
 ];
 
 export const URGENCY_META = {
     emergency: {
         label: "Emergency",
-        sub: { hi: "अभी अस्पताल जाएँ", en: "Go to hospital now", ta: "இப்போது மருத்துவமனைக்கு செல்லுங்கள்" },
+        sub: { hi: "अभी अस्पताल जाएँ", bn: "এখনই হাসপাতালে যান", en: "Go to hospital now", ta: "இப்போது மருத்துவமனைக்கு செல்லுங்கள்" },
         bg: "bg-destructive",
         text: "text-destructive-foreground",
         ring: "ring-destructive/30",
@@ -29,7 +30,7 @@ export const URGENCY_META = {
     },
     soon: {
         label: "See a doctor soon",
-        sub: { hi: "जल्द डॉक्टर से मिलें", en: "See a doctor soon", ta: "விரைவில் மருத்துவரை பாருங்கள்" },
+        sub: { hi: "जल्द डॉक्टर से मिलें", bn: "শীঘ্রই ডাক্তার দেখান", en: "See a doctor soon", ta: "விரைவில் மருத்துவரை பாருங்கள்" },
         bg: "bg-accent",
         text: "text-accent-foreground",
         ring: "ring-accent/30",
@@ -38,7 +39,7 @@ export const URGENCY_META = {
     },
     home: {
         label: "Home care",
-        sub: { hi: "घर पर देखभाल", en: "Home care advice", ta: "வீட்டு பராமரிப்பு" },
+        sub: { hi: "घर पर देखभाल", bn: "বাড়িতে যত্ন নিন", en: "Home care advice", ta: "வீட்டு பராமரிப்பு" },
         bg: "bg-secondary",
         text: "text-secondary-foreground",
         ring: "ring-secondary/30",

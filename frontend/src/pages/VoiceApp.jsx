@@ -10,11 +10,12 @@ import { api, LANGUAGES, URGENCY_META } from "@/lib/api";
 const UI = {
     hi: { tap: "बोलने के लिए दबाएँ", listening: "सुन रहे हैं… फिर से दबाकर रोकें", thinking: "समझ रहे हैं…", again: "फिर से बोलें", play: "आवाज़ सुनें", you: "आपने कहा" },
     en: { tap: "Tap to speak", listening: "Listening… tap again to stop", thinking: "Understanding…", again: "Speak again", play: "Play voice", you: "You said" },
+    bn: { tap: "বলতে স্পর্শ করুন", listening: "শুনছি… থামাতে আবার চাপুন", thinking: "বুঝে নিচ্ছি…", again: "আবার বলুন", play: "আওয়াজ শুনুন", you: "আপনি বলেছেন" },
     ta: { tap: "பேச தட்டவும்", listening: "கேட்கிறோம்… நிறுத்த மீண்டும் தட்டவும்", thinking: "புரிந்துகொள்கிறோம்…", again: "மீண்டும் பேசுங்கள்", play: "குரலைக் கேளுங்கள்", you: "நீங்கள் சொன்னது" },
 };
 
 const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
-const LANG_VOICE = { hi: "hi-IN", en: "en-US", ta: "ta-IN" };
+const LANG_VOICE = { hi: "hi-IN", en: "en-US", bn: "bn-IN", ta: "ta-IN" };
 
 export default function VoiceApp() {
     const [lang, setLang] = useState("hi");
@@ -30,7 +31,7 @@ export default function VoiceApp() {
     const recognitionRef = useRef(null);
     const liveTranscriptRef = useRef("");
 
-    const t = UI[lang];
+    const t = UI[lang] || UI.hi;
 
     useEffect(() => {
         return () => {
@@ -128,7 +129,6 @@ export default function VoiceApp() {
         try {
             const { data } = await api.post("/triage/voice", fd, { headers: { "Content-Type": "multipart/form-data" } });
             
-            // If recognizedText exists locally and backend transcript was default fallback, override with client transcript
             if (recognizedText && recognizedText.trim()) {
                 data.transcript = recognizedText.trim();
             }
@@ -137,7 +137,6 @@ export default function VoiceApp() {
             setStatus("result");
             playAudio(data.audio_base64, data.spoken || data.advice);
         } catch (e) {
-            // Offline / Error fallback
             if (recognizedText && recognizedText.trim()) {
                 return submitTextDirect(recognizedText);
             }
@@ -190,7 +189,7 @@ export default function VoiceApp() {
 
             {/* Language selector */}
             <div className="max-w-2xl mx-auto w-full px-5 mt-2">
-                <div className="flex gap-2 justify-center" data-testid="lang-selector">
+                <div className="flex flex-wrap gap-2 justify-center" data-testid="lang-selector">
                     {LANGUAGES.map((l) => (
                         <button
                             key={l.code}
@@ -254,7 +253,7 @@ export default function VoiceApp() {
                             {showType && status === "idle" && (
                                 <div className="mt-4 w-full max-w-md">
                                     <Textarea data-testid="type-symptom-input" value={typed} onChange={(e) => setTyped(e.target.value)}
-                                        placeholder="मुझे बुखार और सिर दर्द है…" rows={3} className="rounded-xl text-base bg-card" />
+                                        placeholder="আমার জ্বর ও বুকে ব্যথা আছে…" rows={3} className="rounded-xl text-base bg-card" />
                                     <Button data-testid="submit-text-btn" onClick={submitText} className="mt-3 w-full rounded-full h-12 font-bold bg-primary hover:bg-primary/90">
                                         Get triage
                                     </Button>

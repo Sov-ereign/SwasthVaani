@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import base64
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Annotated
@@ -31,10 +32,22 @@ except ImportError:
     HAS_OLLAMA = False
 
 try:
+    from groq import Groq
+    HAS_GROQ = True
+except ImportError:
+    HAS_GROQ = False
+
+try:
     from kokoro_onnx import Kokoro
     HAS_KOKORO = True
 except ImportError:
     HAS_KOKORO = False
+
+try:
+    import edge_tts
+    HAS_EDGE_TTS = True
+except ImportError:
+    HAS_EDGE_TTS = False
 
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -61,6 +74,7 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', 'demo-key')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'swasthvaani-secret-jwt-key-2026')
 CLINIC_EMAIL = os.environ.get('CLINIC_EMAIL', 'clinic@swasthvaani.health')
 CLINIC_PASSWORD = os.environ.get('CLINIC_PASSWORD', 'clinic123')
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 IN_MEMORY_TRIAGE_REQUESTS = []
 
@@ -101,15 +115,16 @@ logger = logging.getLogger(__name__)
 PyObjectId = Annotated[str, BeforeValidator(str)]
 
 LANGS = {
-    "hi": {"name": "Hindi", "whisper": "hi", "polly": "Polly.Aditi"},
-    "en": {"name": "English", "whisper": "en", "polly": "Polly.Joanna"},
-    "ta": {"name": "Tamil", "whisper": "ta", "polly": "Polly.Aditi"},
+    "hi": {"name": "Hindi", "whisper": "hi", "polly": "Polly.Aditi", "edge": "hi-IN-SwaraNeural", "browser": "hi-IN"},
+    "en": {"name": "English", "whisper": "en", "polly": "Polly.Joanna", "edge": "en-IN-NeerjaNeural", "browser": "en-US"},
+    "bn": {"name": "Bengali", "whisper": "bn", "polly": "Polly.Aditi", "edge": "bn-IN-TanishaaNeural", "browser": "bn-IN"},
+    "ta": {"name": "Tamil", "whisper": "ta", "polly": "Polly.Aditi", "edge": "ta-IN-PallaviNeural", "browser": "ta-IN"},
 }
 
 URGENCY = {
-    "emergency": {"label": "Emergency", "label_hi": "आपातकाल"},
-    "soon": {"label": "See a doctor soon", "label_hi": "जल्द डॉक्टर से मिलें"},
-    "home": {"label": "Home care", "label_hi": "घरेलू देखभाल"},
+    "emergency": {"label": "Emergency", "label_hi": "आपातकाल", "label_bn": "জরুরি অবস্থা"},
+    "soon": {"label": "See a doctor soon", "label_hi": "जल्द डॉक्टर से मिलें", "label_bn": "শীঘ্রই ডাক্তার দেখান"},
+    "home": {"label": "Home care", "label_hi": "घरेलू देखभाल", "label_bn": "বাড়িতে যত্ন"},
 }
 
 
@@ -187,11 +202,11 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
     lang = LANGS.get(language, LANGS["hi"])
     data = None
 
-    # 1. Try Ollama (Nemotron model)
+    # 1. Primary LLM: Ollama (Nemotron / Super 3 / Cloud)
     if HAS_OLLAMA:
         try:
             ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-            ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-mini")
+            ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron")
             client_ollama = ollama.Client(host=ollama_host)
             prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {transcript}"
             resp = client_ollama.generate(model=ollama_model, prompt=prompt)
@@ -200,10 +215,34 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
                 raw = raw.strip("`")
                 raw = raw[raw.find("{"):]
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+            logger.info("Successfully triaged via Ollama Nemotron")
         except Exception as e:
-            logger.warning(f"Ollama Nemotron triage attempt error: {e}")
+            logger.warning(f"Ollama Nemotron triage fallback: {e}")
 
-    # 2. Try Emergent / OpenAI LLM
+    # 2. Secondary Fallback LLM: Groq API
+    if not data and HAS_GROQ and (GROQ_API_KEY or os.environ.get("GROQ_API_KEY")):
+        try:
+            g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
+            g_client = Groq(api_key=g_key)
+            completion = g_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])},
+                    {"role": "user", "content": f"Patient symptoms (in {lang['name']}): {transcript}"}
+                ],
+                temperature=0.2,
+                max_tokens=300,
+            )
+            raw = completion.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                raw = raw[raw.find("{"):]
+            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+            logger.info("Successfully triaged via Groq Llama 3.3")
+        except Exception as e:
+            logger.warning(f"Groq API triage fallback: {e}")
+
+    # 3. Tertiary Fallback LLM: Emergent / OpenAI LLM
     if not data and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
         try:
             chat = LlmChat(
@@ -219,23 +258,25 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
                 raw = raw[raw.find("{"):]
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
         except Exception as e:
-            logger.error(f"Triage LLM call error: {e}")
+            logger.error(f"Emergent LLM triage fallback: {e}")
 
-    # 3. Rule-based safety fallback
+    # 4. Rule-based safety engine fallback (supporting English, Hindi, Bengali, Tamil)
     if not data:
         lower_t = transcript.lower()
-        if any(k in lower_t for k in ["chest pain", "bleeding", "unconscious", "breath", "सीने में दर्द", "सांस", "खून"]):
+        if any(k in lower_t for k in ["chest pain", "bleeding", "unconscious", "breath", "सीने में दर्द", "सांस", "खून", "বুকে ব্যথা", "শ্বাসকষ্ট", "রক্ত"]):
             urgency = "emergency"
             summary = "Chest pain / severe symptoms reported"
             advice = "Please reach the nearest emergency hospital immediately or call for urgent medical assistance."
             spoken_hi = "सीने में दर्द या गंभीर लक्षण हैं। कृपया तुरंत नजदीकी अस्पताल जाएँ या आपातकालीन सेवा से संपर्क करें।"
+            spoken_bn = "বুকে ব্যথা বা মারাত্মক লক্ষণ রয়েছে। অবিলম্বে নিকটস্থ হাসপাতালে যান বা জরুরি সেবায় কল করুন।"
             spoken_en = "Severe symptoms detected. Please seek emergency medical care at the nearest hospital immediately."
             spoken_ta = "கடுமையான அறிகுறிகள். உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும்."
-        elif any(k in lower_t for k in ["fever", "pain", "infection", "vomit", "बुखार", "दर्द", "कफ"]):
+        elif any(k in lower_t for k in ["fever", "pain", "infection", "vomit", "बुखार", "दर्द", "कफ", "জ্বর", "ব্যথা", "বমি"]):
             urgency = "soon"
             summary = "Fever / persistent symptoms reported"
             advice = "Visit a primary healthcare center or doctor within 1-2 days."
             spoken_hi = "आपको जल्द डॉक्टर से मिलना चाहिए। 1-2 दिनों के भीतर स्वास्थ्य केंद्र जाएँ और आराम करें।"
+            spoken_bn = "আপনার শীঘ্রই ডাক্তার দেখানো উচিত। ১-২ দিনের মধ্যে স্বাস্থ্যকেন্দ্রে যান এবং বিশ্রাম নিন।"
             spoken_en = "You should consult a doctor within 1 to 2 days. Rest and stay hydrated."
             spoken_ta = "1-2 நாட்களுக்குள் மருத்துவரை அணுகவும்."
         else:
@@ -243,10 +284,11 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
             summary = "Mild symptoms reported"
             advice = "Rest well at home, drink fluids, and monitor symptoms. Consult a doctor if condition worsens."
             spoken_hi = "घर पर आराम करें और पर्याप्त पानी पिएं। यदि लक्षण बिगड़ते हैं, तो डॉक्टर से मिलें।"
+            spoken_bn = "বাড়িতে বিশ্রাম নিন এবং পর্যাপ্ত জল পান করুন। লক্ষণগুলি খারাপ হলে ডাক্তারের সাথে পরামর্শ করুন।"
             spoken_en = "Rest well at home and drink clean water. Contact a doctor if symptoms get worse."
             spoken_ta = "வீட்டில் ஓய்வெடுத்து திரவங்களை அருந்தவும்."
 
-        spoken_map = {"hi": spoken_hi, "en": spoken_en, "ta": spoken_ta}
+        spoken_map = {"hi": spoken_hi, "bn": spoken_bn, "en": spoken_en, "ta": spoken_ta}
         data = {
             "urgency": urgency,
             "summary": summary,
@@ -284,9 +326,11 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
 
 
 async def synth_speech(text: str, language: str = "hi") -> str:
-    # 1. Try Kokoro TTS engine
+    lang_info = LANGS.get(language, LANGS["hi"])
+
+    # 1. Try Kokoro TTS engine (Primary local TTS for English/Hindi)
     kokoro = get_kokoro()
-    if kokoro is not None:
+    if kokoro is not None and language in ["en", "hi"]:
         try:
             voice_name = os.environ.get("KOKORO_VOICE", "hf_alpha")
             samples, sample_rate = kokoro.create(text[:500], voice=voice_name, speed=1.0, lang=language)
@@ -297,7 +341,22 @@ async def synth_speech(text: str, language: str = "hi") -> str:
         except Exception as e:
             logger.error(f"Kokoro TTS synthesis error: {e}")
 
-    # 2. Try Emergent / OpenAI TTS
+    # 2. Try Edge TTS (High-quality local TTS supporting English, Hindi, Bengali, Tamil)
+    if HAS_EDGE_TTS:
+        try:
+            voice = lang_info.get("edge", "hi-IN-SwaraNeural")
+            communicate = edge_tts.Communicate(text[:1000], voice)
+            buffer = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    buffer.write(chunk["data"])
+            b_val = buffer.getvalue()
+            if b_val:
+                return base64.b64encode(b_val).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Edge TTS synthesis error: {e}")
+
+    # 3. Try Emergent / OpenAI TTS
     if HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
         try:
             tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
@@ -339,7 +398,7 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
     transcript = ""
     lang = LANGS.get(language, LANGS["hi"])
 
-    # 1. Try local Whisper Small model
+    # 1. Local Whisper Small model for speech-to-text (Supports Bengali, Hindi, English, Tamil)
     w_model = get_whisper()
     if w_model is not None:
         try:
@@ -350,10 +409,11 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
             transcript = res.get("text", "").strip()
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+            logger.info(f"Whisper Small local STT transcribed: {transcript}")
         except Exception as e:
             logger.error(f"Local Whisper Small transcription error: {e}")
 
-    # 2. Try Emergent STT
+    # 2. Try Emergent STT fallback
     if not transcript and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
         fname = audio.filename or "audio.webm"
         ext = fname.split(".")[-1].lower()
@@ -366,10 +426,16 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
             result = await stt.transcribe(file=bio, model="whisper-1", response_format="json", language=lang["whisper"])
             transcript = result.text if hasattr(result, "text") else str(result)
         except Exception as e:
-            logger.error(f"Emergent transcription error: {e}")
+            logger.error(f"Emergent STT transcription error: {e}")
 
     if not transcript.strip():
-        transcript = "मुझे बुखार और सीने में दर्द है"
+        default_transcripts = {
+            "hi": "मुझे बुखार और सीने में दर्द है",
+            "bn": "আমার জ্বর এবং বুকে ব্যথা আছে",
+            "en": "I have fever and chest pain",
+            "ta": "எனக்கு காய்ச்சல் மற்றும் நெஞ்சு வலி உள்ளது"
+        }
+        transcript = default_transcripts.get(language, "I have fever and chest pain")
 
     doc = await run_triage(transcript, language, caller, "web")
     audio_b64 = await synth_speech(doc.spoken or doc.advice, language)
@@ -438,7 +504,7 @@ async def ivr_voice():
     body = (
         '<Gather input="dtmf" numDigits="1" action="/api/ivr/collect" method="POST" timeout="6">'
         '<Say voice="Polly.Aditi">Welcome to Swasth Vaani, your voice health helper. '
-        'For Hindi press 1. For English press 2. For Tamil press 3.</Say>'
+        'For Hindi press 1. For English press 2. For Bengali press 3. For Tamil press 4.</Say>'
         '</Gather>'
         '<Redirect method="POST">/api/ivr/voice</Redirect>'
     )
@@ -449,11 +515,12 @@ async def ivr_voice():
 async def ivr_collect(request: Request):
     form = await request.form()
     digit = form.get("Digits", "1")
-    lang = {"1": "hi", "2": "en", "3": "ta"}.get(digit, "hi")
+    lang = {"1": "hi", "2": "en", "3": "bn", "4": "ta"}.get(digit, "hi")
     l = LANGS[lang]
     prompts = {
         "hi": "अपनी बीमारी या लक्षण बोलिए। बोलने के बाद रुक जाइए।",
         "en": "Please describe your symptoms after the beep, then pause.",
+        "bn": "বিープের পর আপনার লক্ষণগুলি বলুন, তারপর থামুন।",
         "ta": "உங்கள் அறிகுறிகளைச் சொல்லுங்கள், பிறகு நிறுத்துங்கள்.",
     }
     body = (
