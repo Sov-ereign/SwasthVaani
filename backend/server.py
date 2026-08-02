@@ -17,6 +17,25 @@ from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
 from bson import ObjectId
 import jwt
 
+# Optional engine imports
+try:
+    import whisper
+    HAS_WHISPER = True
+except ImportError:
+    HAS_WHISPER = False
+
+try:
+    import ollama
+    HAS_OLLAMA = True
+except ImportError:
+    HAS_OLLAMA = False
+
+try:
+    from kokoro_onnx import Kokoro
+    HAS_KOKORO = True
+except ImportError:
+    HAS_KOKORO = False
+
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
@@ -44,6 +63,33 @@ CLINIC_EMAIL = os.environ.get('CLINIC_EMAIL', 'clinic@swasthvaani.health')
 CLINIC_PASSWORD = os.environ.get('CLINIC_PASSWORD', 'clinic123')
 
 IN_MEMORY_TRIAGE_REQUESTS = []
+
+_whisper_model_obj = None
+_kokoro_obj = None
+
+def get_whisper():
+    global _whisper_model_obj
+    if HAS_WHISPER and _whisper_model_obj is None:
+        try:
+            model_name = os.environ.get("WHISPER_MODEL", "small")
+            logging.info(f"Loading Whisper STT model '{model_name}'...")
+            _whisper_model_obj = whisper.load_model(model_name)
+        except Exception as e:
+            logging.error(f"Whisper load error: {e}")
+    return _whisper_model_obj
+
+def get_kokoro():
+    global _kokoro_obj
+    if HAS_KOKORO and _kokoro_obj is None:
+        try:
+            model_path = os.environ.get("KOKORO_MODEL_PATH", "kokoro-v0_19.onnx")
+            voices_path = os.environ.get("KOKORO_VOICES_PATH", "voices.json")
+            if os.path.exists(model_path) and os.path.exists(voices_path):
+                logging.info("Initializing Kokoro TTS engine...")
+                _kokoro_obj = Kokoro(model_path, voices_path)
+        except Exception as e:
+            logging.error(f"Kokoro TTS load error: {e}")
+    return _kokoro_obj
 
 app = FastAPI(title="SwasthVaani API")
 api_router = APIRouter(prefix="/api")
@@ -141,7 +187,24 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
     lang = LANGS.get(language, LANGS["hi"])
     data = None
 
-    if HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
+    # 1. Try Ollama (Nemotron model)
+    if HAS_OLLAMA:
+        try:
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron-mini")
+            client_ollama = ollama.Client(host=ollama_host)
+            prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {transcript}"
+            resp = client_ollama.generate(model=ollama_model, prompt=prompt)
+            raw = resp.get('response', '').strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                raw = raw[raw.find("{"):]
+            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        except Exception as e:
+            logger.warning(f"Ollama Nemotron triage attempt error: {e}")
+
+    # 2. Try Emergent / OpenAI LLM
+    if not data and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
         try:
             chat = LlmChat(
                 api_key=EMERGENT_LLM_KEY,
@@ -156,8 +219,9 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
                 raw = raw[raw.find("{"):]
             data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
         except Exception as e:
-            logger.error(f"Triage LLM call or JSON parse failed: {e}")
+            logger.error(f"Triage LLM call error: {e}")
 
+    # 3. Rule-based safety fallback
     if not data:
         lower_t = transcript.lower()
         if any(k in lower_t for k in ["chest pain", "bleeding", "unconscious", "breath", "सीने में दर्द", "सांस", "खून"]):
@@ -219,13 +283,28 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
     return doc
 
 
-async def synth_speech(text: str) -> str:
+async def synth_speech(text: str, language: str = "hi") -> str:
+    # 1. Try Kokoro TTS engine
+    kokoro = get_kokoro()
+    if kokoro is not None:
+        try:
+            voice_name = os.environ.get("KOKORO_VOICE", "hf_alpha")
+            samples, sample_rate = kokoro.create(text[:500], voice=voice_name, speed=1.0, lang=language)
+            buffer = io.BytesIO()
+            import soundfile as sf
+            sf.write(buffer, samples, sample_rate, format="WAV")
+            return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Kokoro TTS synthesis error: {e}")
+
+    # 2. Try Emergent / OpenAI TTS
     if HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
         try:
             tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
             return await tts.generate_speech_base64(text=text[:4000], model="tts-1", voice="nova")
         except Exception as e:
-            logger.error(f"TTS synthesis failed: {e}")
+            logger.error(f"OpenAI TTS synthesis error: {e}")
+
     return ""
 
 
@@ -256,28 +335,44 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty audio")
-    fname = audio.filename or "audio.webm"
-    ext = fname.split(".")[-1].lower()
-    if ext not in ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]:
-        ext = "webm"
-    bio = io.BytesIO(content)
-    bio.name = f"audio.{ext}"
-
+    
     transcript = ""
-    if HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
+    lang = LANGS.get(language, LANGS["hi"])
+
+    # 1. Try local Whisper Small model
+    w_model = get_whisper()
+    if w_model is not None:
+        try:
+            temp_path = f"/tmp/upload_{datetime.now(timezone.utc).timestamp()}.webm"
+            with open(temp_path, "wb") as f:
+                f.write(content)
+            res = w_model.transcribe(temp_path, language=lang.get("whisper", "hi"))
+            transcript = res.get("text", "").strip()
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception as e:
+            logger.error(f"Local Whisper Small transcription error: {e}")
+
+    # 2. Try Emergent STT
+    if not transcript and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
+        fname = audio.filename or "audio.webm"
+        ext = fname.split(".")[-1].lower()
+        if ext not in ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]:
+            ext = "webm"
+        bio = io.BytesIO(content)
+        bio.name = f"audio.{ext}"
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        lang = LANGS.get(language, LANGS["hi"])
         try:
             result = await stt.transcribe(file=bio, model="whisper-1", response_format="json", language=lang["whisper"])
             transcript = result.text if hasattr(result, "text") else str(result)
         except Exception as e:
-            logger.error(f"Transcription failed: {e}")
+            logger.error(f"Emergent transcription error: {e}")
 
     if not transcript.strip():
         transcript = "मुझे बुखार और सीने में दर्द है"
 
     doc = await run_triage(transcript, language, caller, "web")
-    audio_b64 = await synth_speech(doc.spoken or doc.advice)
+    audio_b64 = await synth_speech(doc.spoken or doc.advice, language)
     return {**doc.model_dump(), "audio_base64": audio_b64}
 
 
@@ -286,7 +381,7 @@ async def triage_text(body: TextTriageInput):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Empty text")
     doc = await run_triage(body.text, body.language, body.caller, "web")
-    audio_b64 = await synth_speech(doc.spoken or doc.advice)
+    audio_b64 = await synth_speech(doc.spoken or doc.advice, body.language)
     return {**doc.model_dump(), "audio_base64": audio_b64}
 
 
