@@ -1,59 +1,114 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Figtree:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800;900&family=Figtree:wght@400;500;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
     :root {
-        --background: 35 30% 94%;
-        --foreground: 33 8% 23%;
+        --background: 35 30% 95%;
+        --foreground: 33 12% 18%;
         --card: 0 0% 100%;
-        --card-foreground: 33 8% 23%;
+        --card-foreground: 33 12% 18%;
         --popover: 0 0% 100%;
-        --popover-foreground: 33 8% 23%;
-        --primary: 19 50% 57%;
+        --popover-foreground: 33 12% 18%;
+        --primary: 19 65% 55%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 130 16% 49%;
+        --secondary: 130 25% 45%;
         --secondary-foreground: 0 0% 100%;
-        --muted: 35 20% 90%;
-        --muted-foreground: 33 8% 45%;
-        --accent: 40 68% 55%;
-        --accent-foreground: 0 0% 15%;
-        --destructive: 0 52% 46%;
+        --muted: 35 25% 91%;
+        --muted-foreground: 33 10% 42%;
+        --accent: 40 75% 52%;
+        --accent-foreground: 0 0% 12%;
+        --destructive: 0 65% 48%;
         --destructive-foreground: 0 0% 100%;
-        --border: 35 15% 85%;
-        --input: 35 15% 85%;
-        --ring: 19 50% 57%;
-        --radius: 0.75rem;
+        --border: 35 18% 84%;
+        --input: 35 18% 84%;
+        --ring: 19 65% 55%;
+        --radius: 1rem;
     }
 }
 
 @layer base {
     * {
         @apply border-border;
+        scroll-behavior: smooth;
     }
 
     body {
         @apply bg-background text-foreground;
         font-family: 'Figtree', sans-serif;
+        overflow-x: hidden;
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    .font-head {
+    h1, h2, h3, h4, h5, h6, .font-head {
         font-family: 'Manrope', sans-serif;
     }
 }
 
+/* Glassmorphism & UI Utilities */
 .grain-bg {
-    background-image: radial-gradient(hsl(35 25% 88%) 1px, transparent 1px);
-    background-size: 22px 22px;
+    background-color: hsl(35 30% 95%);
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(249, 115, 22, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(34, 197, 94, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(234, 179, 8, 0.06) 0px, transparent 50%),
+        radial-gradient(hsl(35 25% 86%) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 24px 24px;
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.05);
+}
+
+.glass-header {
+    background: rgba(247, 245, 240, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.gradient-text {
+    background: linear-gradient(135deg, hsl(19 75% 48%) 0%, hsl(19 65% 58%) 50%, hsl(40 85% 45%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.gradient-bg {
+    background: linear-gradient(135deg, hsl(19 65% 55%) 0%, hsl(19 75% 48%) 100%);
+}
+
+.glow-primary {
+    box-shadow: 0 8px 25px -5px rgba(234, 88, 12, 0.4);
+}
+
+.glow-secondary {
+    box-shadow: 0 8px 25px -5px rgba(34, 197, 94, 0.35);
+}
+
+.glow-destructive {
+    box-shadow: 0 8px 25px -5px rgba(225, 29, 72, 0.4);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: hsl(35 25% 92%);
+}
+::-webkit-scrollbar-thumb {
+    background: hsl(35 15% 75%);
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(19 65% 55%);
 }
 
 ::selection {
-    background: hsl(19 50% 57%);
+    background: hsl(19 65% 55%);
     color: white;
 }
