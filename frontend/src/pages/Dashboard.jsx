@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Activity, LogOut, AlertTriangle, Clock, Home, Phone, Globe, Users, RefreshCw, ArrowLeft, Stethoscope, Download, Search, Volume2, ShieldAlert, MapPin, Radio, Check } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Activity, LogOut, AlertTriangle, Clock, Home, Phone, Globe, Users, RefreshCw, ArrowLeft, Stethoscope, Download, Search, Volume2, ShieldAlert, MapPin, Radio, Check, X, PhoneCall } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -111,6 +111,7 @@ function DashboardView({ onLogout }) {
     const [filterUrgency, setFilterUrgency] = useState("all");
     const [searchQuery, setSearchQuery] = useState("");
     const [viewMode, setViewMode] = useState("table"); // table | outbreak
+    const [selectedRequest, setSelectedRequest] = useState(null);
 
     const load = async () => {
         try {
@@ -126,13 +127,15 @@ function DashboardView({ onLogout }) {
 
     const exportCSV = () => {
         if (!requests.length) return toast.error("No data to export");
-        const headers = ["Caller", "Source", "Language", "Urgency", "Symptoms", "Advice", "CreatedAt"];
+        const headers = ["Caller", "Source", "Language", "Urgency", "Flagged", "RedFlags", "Symptoms", "Advice", "CreatedAt"];
         const rows = requests.map(r => [
             `"${r.caller}"`,
             `"${r.source}"`,
             `"${r.language}"`,
             `"${r.urgency}"`,
-            `"${(r.summary || r.transcript).replace(/"/g, '""')}"`,
+            `"${r.flagged ? 'YES' : 'no'}"`,
+            `"${(r.red_flags || []).join('; ')}"`,
+            `"${(r.symptoms || []).join('; ')}"`,
             `"${(r.spoken || r.advice).replace(/"/g, '""')}"`,
             `"${r.created_at}"`
         ]);
@@ -267,6 +270,7 @@ function DashboardView({ onLogout }) {
                             </div>
                         </div>
                     </div>
+                    </div>
                 ) : (
                     <>
                         {/* Filter and Search Bar */}
@@ -323,9 +327,13 @@ function DashboardView({ onLogout }) {
                                     filteredRequests.map((r, i) => {
                                         const meta = URGENCY_META[r.urgency] || URGENCY_META.soon;
                                         const Icon = ICONS[r.urgency] || Clock;
+                                        const isEmergency = r.urgency === "emergency";
                                         return (
                                             <motion.div key={r.id || i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                                                className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-muted/30 transition-colors" data-testid={`request-row-${i}`}>
+                                                onClick={() => setSelectedRequest(r)}
+                                                className={`grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-muted/30 transition-all border-l-4 cursor-pointer hover:translate-x-0.5 ${
+                                                    isEmergency ? "border-l-destructive bg-destructive/5 hover:bg-destructive/10" : "border-l-transparent"
+                                                }`} data-testid={`request-row-${i}`}>
                                                 <div className="col-span-3 flex items-center gap-2 min-w-0">
                                                     <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${r.source === "ivr" ? "bg-secondary/15 text-secondary" : "bg-primary/10 text-primary"}`}>
                                                         {r.source === "ivr" ? <Phone className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
@@ -338,14 +346,35 @@ function DashboardView({ onLogout }) {
                                                 <div className="col-span-4 min-w-0">
                                                     <p className="text-sm font-semibold text-foreground truncate">{r.summary || r.transcript}</p>
                                                     <p className="text-xs text-muted-foreground truncate italic">"{r.transcript}"</p>
+                                                    {/* Symptoms chips */}
+                                                    {r.symptoms && r.symptoms.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 mt-1.5">
+                                                            {r.symptoms.slice(0, 4).map((s, si) => (
+                                                                <span key={si} className="bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full font-medium">{s}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {/* Red flags for flagged cases */}
+                                                    {r.flagged && r.red_flags && r.red_flags.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 mt-1.5">
+                                                            {r.red_flags.slice(0, 3).map((rf, ri) => (
+                                                                <span key={ri} className="bg-destructive/15 text-destructive text-xs px-2 py-0.5 rounded-full font-bold">🚨 {rf}</span>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                                <div className="col-span-2">
-                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1`}>
+                                                <div className="col-span-2 flex flex-col gap-1">
+                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1 w-fit`}>
                                                         <Icon className="w-3.5 h-3.5" /> {meta.label}
                                                     </Badge>
+                                                    {r.flagged && (
+                                                        <Badge className="bg-destructive text-destructive-foreground rounded-full gap-1 font-bold border-0 px-2.5 py-0.5 text-xs w-fit">
+                                                            🚨 Flagged
+                                                        </Badge>
+                                                    )}
                                                 </div>
                                                 <div className="col-span-1">
-                                                    <button onClick={() => playDoctorAudio(r.spoken || r.advice || r.transcript, r.language)}
+                                                    <button onClick={(e) => { e.stopPropagation(); playDoctorAudio(r.spoken || r.advice || r.transcript, r.language); }}
                                                         className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center" title="Listen to Patient Audio">
                                                         <Volume2 className="w-4 h-4" />
                                                     </button>
@@ -362,6 +391,128 @@ function DashboardView({ onLogout }) {
                     </>
                 )}
             </main>
+
+            {/* Case Detail Modal overlay */}
+            <AnimatePresence>
+                {selectedRequest && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-sm" onClick={() => setSelectedRequest(null)}>
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+                            animate={{ opacity: 1, scale: 1, y: 0 }} 
+                            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                            className="bg-card border border-border rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Close button */}
+                            <button onClick={() => setSelectedRequest(null)} className="absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-full hover:bg-muted transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+
+                            {/* Header info */}
+                            <div className="flex items-center gap-3 mb-5">
+                                <span className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedRequest.source === "ivr" ? "bg-secondary/15 text-secondary" : "bg-primary/10 text-primary"}`}>
+                                    {selectedRequest.source === "ivr" ? <Phone className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
+                                </span>
+                                <div>
+                                    <h3 className="font-head font-extrabold text-lg leading-tight">{selectedRequest.caller}</h3>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        {new Date(selectedRequest.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                        {" · "}<span className="capitalize">{selectedRequest.source}</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Urgency Badge */}
+                            <div className="flex flex-wrap gap-2 mb-6">
+                                <Badge className={`${URGENCY_META[selectedRequest.urgency]?.badge || URGENCY_META.soon.badge} rounded-full gap-1.5 font-bold border-0 px-3.5 py-1 text-xs`}>
+                                    {selectedRequest.urgency.toUpperCase()}
+                                </Badge>
+                                {selectedRequest.flagged && (
+                                    <Badge className="bg-destructive text-destructive-foreground rounded-full gap-1.5 font-bold border-0 px-3 py-1 text-xs">
+                                        🚨 RED FLAG TRIGGERED
+                                    </Badge>
+                                )}
+                            </div>
+
+                            {/* Transcript Card */}
+                            <div className="space-y-5">
+                                <div>
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Voice Transcript ({selectedRequest.language.toUpperCase()})</h4>
+                                    <div className="bg-muted/45 border border-border/60 rounded-2xl p-4 italic text-foreground/90 text-sm">
+                                        "{selectedRequest.transcript}"
+                                    </div>
+                                </div>
+
+                                {/* Symptoms & Red Flags */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Symptoms</h4>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {selectedRequest.symptoms && selectedRequest.symptoms.length > 0 ? (
+                                                selectedRequest.symptoms.map((s, idx) => (
+                                                    <span key={idx} className="bg-primary/10 text-primary text-xs font-medium px-2.5 py-0.5 rounded-full">{s}</span>
+                                                ))
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground italic">None extracted</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Red Flags</h4>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {selectedRequest.red_flags && selectedRequest.red_flags.length > 0 ? (
+                                                selectedRequest.red_flags.map((rf, idx) => (
+                                                    <span key={idx} className="bg-destructive/15 text-destructive text-xs font-bold px-2.5 py-0.5 rounded-full">🚨 {rf}</span>
+                                                ))
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground italic">None detected</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Advice Card */}
+                                <div>
+                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Spoken Triage Advice</h4>
+                                    <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 text-foreground/90 text-sm leading-relaxed font-medium">
+                                        {selectedRequest.spoken || selectedRequest.advice}
+                                    </div>
+                                </div>
+
+                                {/* Medical Disclaimer */}
+                                <div className="bg-muted/50 border border-border/85 rounded-xl p-3 flex gap-2">
+                                    <AlertTriangle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                                    <p className="text-[10px] text-muted-foreground leading-normal">
+                                        Disclaimer: Triage guidance only. All triage decisions must be clinically reviewed and validated by a physician.
+                                    </p>
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="flex gap-2 pt-2">
+                                    <Button onClick={() => { toast.success("Marked as reviewed"); setSelectedRequest(null); }} className="flex-1 rounded-full h-11 font-bold bg-primary hover:bg-primary/90">
+                                        Mark Reviewed
+                                    </Button>
+                                    {selectedRequest.urgency === "emergency" && (
+                                        <Button onClick={() => toast.info("Ambulance dispatched (simulated 108 handoff)")} variant="destructive" className="rounded-full h-11 px-5 font-bold flex items-center gap-1.5">
+                                            <Activity className="w-4 h-4" /> Dispatch 108
+                                        </Button>
+                                    )}
+                                    <Button variant="outline" onClick={() => setSelectedRequest(null)} className="rounded-full h-11 font-bold">
+                                        Close
+                                    </Button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Mandatory disclaimer footer */}
+            <footer className="max-w-7xl mx-auto px-6 py-4 border-t border-border">
+                <p className="text-xs text-muted-foreground text-center">
+                    ⚠️ SwasthVaani provides triage guidance only — not a medical diagnosis. All cases require professional clinical review. Always consult a qualified health professional.
+                </p>
+            </footer>
         </div>
     );
 }

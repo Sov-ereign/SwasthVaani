@@ -10,14 +10,35 @@ import { Label } from "@/components/ui/label";
 import { api, LANGUAGES, URGENCY_META } from "@/lib/api";
 
 const UI = {
-    hi: { tap: "बोलने के लिए दबाएँ", listening: "सुन रहे हैं… फिर से दबाकर रोकें", thinking: "समझ रहे हैं…", again: "फिर से बोलें", play: "आवाज़ सुनें", you: "आपने कहा" },
-    en: { tap: "Tap to speak", listening: "Listening… tap again to stop", thinking: "Understanding…", again: "Speak again", play: "Play voice", you: "You said" },
-    bn: { tap: "বলতে স্পর্শ করুন", listening: "শুনছি… থামাতে আবার চাপুন", thinking: "বুঝে নিচ্ছি…", again: "আবার বলুন", play: "আওয়াজ শুনুন", you: "আপনি বলেছেন" },
-    ta: { tap: "பேச தட்டவும்", listening: "கேட்கிறோம்… நிறுத்த மீண்டும் தட்டவும்", thinking: "புரிந்துகொள்கிறோம்…", again: "மீண்டும் பேசுங்கள்", play: "குரலைக் கேளுங்கள்", you: "நீங்கள் சொன்னது" },
+    hi: { tap: "बोलने के लिए दबाएँ", listening: "सुन रहे हैं… फिर से दबाकर रोकें", thinking: "समझ रहे हैं…", again: "फिर से बोलें", play: "आवाज़ सुनें", you: "आपने कहा", placeholder: "मुझे बुखार और सिर दर्द है…", typeBtn: "टाइप करें" },
+    en: { tap: "Tap to speak", listening: "Listening… tap again to stop", thinking: "Understanding…", again: "Speak again", play: "Play voice", you: "You said", placeholder: "I have a fever and headache…", typeBtn: "Type instead" },
+    bn: { tap: "বলতে স্পর্শ করুন", listening: "শুনছি… থামাতে আবার চাপুন", thinking: "বুঝে নিচ্ছি…", again: "আবার বলুন", play: "আওয়াজ শুনুন", you: "আপনি বলেছেন", placeholder: "আমার জ্বর ও বুকে ব্যথা আছে…", typeBtn: "টাইপ করুন" },
+    ta: { tap: "பேச தட்டவும்", listening: "கேட்கிறோம்… நிறுத்த மீண்டும் தட்டவும்", thinking: "புரிந்துகொள்கிறோம்…", again: "மீண்டும் பேசுங்கள்", play: "குரலைக் கேளுங்கள்", you: "நீங்கள் சொன்னது", placeholder: "எனக்கு காய்ச்சல் மற்றும் தலைவலி உள்ளது…", typeBtn: "தட்டச்சு செய்யவும்" },
 };
 
 const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
 const LANG_VOICE = { hi: "hi-IN", en: "en-US", bn: "bn-IN", ta: "ta-IN" };
+
+const PROCESSING_STEPS = {
+    hi: [
+        "आपकी आवाज़ रिकॉर्ड की जा रही है...",
+        "लक्षणों का विश्लेषण हो रहा है...",
+        "क्लिनिकल सेफ्टी चेक किया जा रहा है...",
+        "सलाह तैयार की जा रही है..."
+    ],
+    en: [
+        "Transcribing your voice...",
+        "Extracting clinical symptoms...",
+        "Running safety gate checks...",
+        "Generating medical advice..."
+    ],
+    ta: [
+        "உங்கள் குரல் பதிவு செய்யப்படுகிறது...",
+        "அறிகுறிகள் பகுப்பாய்வு செய்யப்படுகின்றன...",
+        "பாதுகாப்பு சோதனை செய்யப்படுகிறது...",
+        "ஆலோசனைகள் தயாரிக்கப்படுகின்றன..."
+    ]
+};
 
 export default function VoiceApp() {
     const [lang, setLang] = useState("hi");
@@ -33,6 +54,7 @@ export default function VoiceApp() {
     const [showType, setShowType] = useState(false);
     const [typed, setTyped] = useState("");
     const [liveTranscript, setLiveTranscript] = useState("");
+    const [processingStep, setProcessingStep] = useState(0);
     
     const mediaRef = useRef(null);
     const chunksRef = useRef([]);
@@ -41,6 +63,20 @@ export default function VoiceApp() {
     const liveTranscriptRef = useRef("");
 
     const t = UI[lang] || UI.hi;
+
+    useEffect(() => {
+        let timer;
+        if (status === "processing") {
+            setProcessingStep(0);
+            timer = setInterval(() => {
+                setProcessingStep((prev) => (prev < 3 ? prev + 1 : prev));
+            }, 900);
+        } else {
+            setProcessingStep(0);
+        }
+        return () => clearInterval(timer);
+    }, [status]);
+
 
     useEffect(() => {
         return () => {
@@ -300,6 +336,26 @@ export default function VoiceApp() {
                                 {status === "recording" ? t.listening : status === "processing" ? t.thinking : t.tap}
                             </p>
 
+                            {/* Waveform visualizer when recording */}
+                            {status === "recording" && (
+                                <div className="flex items-center justify-center gap-1 h-8 mt-3">
+                                    {[...Array(9)].map((_, i) => (
+                                        <motion.div
+                                            key={i}
+                                            className="w-1 bg-destructive rounded-full"
+                                            animate={{
+                                                height: [8, 28 + Math.sin(i * 1.3) * 12, 8],
+                                            }}
+                                            transition={{
+                                                duration: 0.5 + (i % 3) * 0.1,
+                                                repeat: Infinity,
+                                                ease: "easeInOut",
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+
                             {/* Live transcription feedback preview */}
                             {status === "recording" && liveTranscript && (
                                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -308,17 +364,47 @@ export default function VoiceApp() {
                                 </motion.div>
                             )}
 
+                            {/* Stepper showing the pipeline progress during processing */}
+                            {status === "processing" && (
+                                <div className="mt-8 w-full max-w-sm space-y-3.5 bg-card border border-border/80 rounded-2xl p-6 shadow-sm">
+                                    {PROCESSING_STEPS[lang].map((stepText, idx) => {
+                                        const isCompleted = idx < processingStep;
+                                        const isActive = idx === processingStep;
+                                        return (
+                                            <div key={idx} className={`flex items-center gap-3 transition-all duration-300 ${isCompleted || isActive ? "opacity-100" : "opacity-35"}`}>
+                                                <div className="flex items-center justify-center shrink-0">
+                                                    {isCompleted ? (
+                                                        <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-white text-[10px]">
+                                                            <Check className="w-3.5 h-3.5" />
+                                                        </div>
+                                                    ) : isActive ? (
+                                                        <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white">
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="w-5 h-5 rounded-full border border-muted-foreground/40" />
+                                                    )}
+                                                </div>
+                                                <span className={`text-sm font-medium ${isActive ? "text-primary font-bold" : "text-foreground"}`}>
+                                                    {stepText}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
                             {status === "idle" && (
                                 <button onClick={() => setShowType((s) => !s)} data-testid="toggle-type-btn"
                                     className="mt-6 flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-medium text-sm">
-                                    <Keyboard className="w-4 h-4" /> Type symptoms instead
+                                    <Keyboard className="w-4 h-4" /> {t.typeBtn}
                                 </button>
                             )}
 
                             {showType && status === "idle" && (
                                 <div className="mt-4 w-full max-w-md">
                                     <Textarea data-testid="type-symptom-input" value={typed} onChange={(e) => setTyped(e.target.value)}
-                                        placeholder="আমার জ্বর ও বুকে ব্যথা আছে…" rows={3} className="rounded-xl text-base bg-card" />
+                                        placeholder={t.placeholder} rows={3} className="rounded-xl text-base bg-card" />
                                     <Button data-testid="submit-text-btn" onClick={submitText} className="mt-3 w-full rounded-full h-12 font-bold bg-primary hover:bg-primary/90">
                                         Get triage
                                     </Button>
@@ -406,6 +492,23 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
                 </div>
             )}
 
+            {/* Red Flag Alert — only shown when safety gate triggered */}
+            {result.flagged && result.red_flags && result.red_flags.length > 0 && (
+                <div className="bg-destructive/10 border-2 border-destructive/50 rounded-2xl p-4 mt-4" data-testid="red-flag-panel">
+                    <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />
+                        <p className="font-bold text-destructive text-sm">Safety gate triggered — emergency forced</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {result.red_flags.map((rf, i) => (
+                            <span key={i} className="bg-destructive/20 text-destructive text-xs font-semibold px-2.5 py-1 rounded-full">
+                                {rf}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Emergency Hotline Alert */}
             {result.urgency === "emergency" && (
                 <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-4 mt-4 flex items-center justify-between">
@@ -424,8 +527,28 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
             <div className="bg-card border border-border rounded-2xl p-6 mt-4 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{t.you}</p>
                 <p className="mt-1 text-foreground italic" data-testid="transcript-text">"{result.transcript}"</p>
+
+                {/* Symptoms chips */}
+                {result.symptoms && result.symptoms.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                        {result.symptoms.map((s, i) => (
+                            <span key={i} className="bg-primary/10 text-primary text-xs font-medium px-2.5 py-0.5 rounded-full">
+                                {s}
+                            </span>
+                        ))}
+                    </div>
+                )}
+
                 <div className="h-px bg-border my-4" />
                 <p className="text-sm leading-relaxed text-foreground/90 font-medium" data-testid="advice-text">{result.spoken}</p>
+            </div>
+
+            {/* Mandatory disclaimer — required on every response */}
+            <div className="mt-4 bg-muted/50 border border-border rounded-xl px-4 py-3 flex gap-2.5" data-testid="disclaimer-banner">
+                <AlertTriangle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                    {result.disclaimer || "⚠️ This is triage guidance only — not a medical diagnosis. Always consult a qualified health professional for medical advice."}
+                </p>
             </div>
 
             {/* Sharing & 24-Hr Callback Automation Actions */}

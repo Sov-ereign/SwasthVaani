@@ -1,22 +1,29 @@
 import os
+import asyncio
 import io
 import json
 import logging
+
 import base64
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Annotated
+from typing import List, Optional, Annotated, Any, Dict
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
 from bson import ObjectId
 import jwt
+
 
 # Optional engine imports
 try:
@@ -60,15 +67,37 @@ except ImportError:
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-db_name = os.environ.get('DB_NAME', 'swasthvaani')
+client = None
+client_loop = None
 
-try:
-    client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=2000)
-    db = client[db_name]
-except Exception as e:
-    client = None
-    db = None
+def get_db():
+    global client, client_loop
+    try:
+        curr_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        curr_loop = None
+
+    if client is not None:
+        if client_loop is None or client_loop.is_closed() or (curr_loop is not None and client_loop is not curr_loop):
+            try:
+                client.close()
+            except Exception:
+                pass
+            client = None
+            client_loop = None
+
+    if client is None:
+        try:
+            mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+            client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=2000)
+            client_loop = curr_loop
+        except Exception as e:
+            logger.warning(f"Mongo client setup failed: {e}")
+            return None
+    db_name = os.environ.get('DB_NAME', 'swasthvaani')
+    return client[db_name]
+
+
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', 'demo-key')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'swasthvaani-secret-jwt-key-2026')
@@ -76,7 +105,7 @@ CLINIC_EMAIL = os.environ.get('CLINIC_EMAIL', 'clinic@swasthvaani.health')
 CLINIC_PASSWORD = os.environ.get('CLINIC_PASSWORD', 'clinic123')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-IN_MEMORY_TRIAGE_REQUESTS = []
+IN_MEMORY_TRIAGE_REQUESTS: List[dict] = []
 
 _whisper_model_obj = None
 _kokoro_obj = None
@@ -109,8 +138,7 @@ app = FastAPI(title="SwasthVaani API")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+
 
 PyObjectId = Annotated[str, BeforeValidator(str)]
 
@@ -128,6 +156,53 @@ URGENCY = {
 }
 
 
+DISCLAIMER = (
+    "⚠️ This is triage guidance only — not a medical diagnosis. "
+    "Always consult a qualified health professional for medical advice."
+)
+
+# Phase 2 contract: red-flag keywords that force Emergency regardless of LLM output.
+# This list is the authoritative source — any change here must be reviewed carefully.
+RED_FLAG_KEYWORDS = [
+    # English
+    "chest pain", "difficulty breathing", "can't breathe", "cannot breathe",
+    "shortness of breath", "severe bleeding", "unconscious", "not breathing",
+    "stroke", "heart attack", "seizure", "convulsion",
+    "severe burn", "poisoning", "overdose", "suicidal",
+    # Hindi
+    "सीने में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "बेहोश",
+    "खून बह", "दौरा",
+    # Tamil
+    "மார்பு வலி", "மூச்சு", "இரத்தம்",
+]
+
+
+def check_red_flags(transcript: str) -> list:
+    """Phase 2 safety gate — runs BEFORE any LLM call.
+    Returns list of matched red-flag phrases, or empty list if none found.
+    This is a hard invariant: if non-empty, urgency MUST be 'emergency'.
+    Output of this function can never be overridden by a model."""
+    lower = transcript.lower()
+    return [kw for kw in RED_FLAG_KEYWORDS if kw.lower() in lower]
+
+
+def extract_symptoms(transcript: str) -> list:
+    """Phase 2 NLP stage — minimal keyword-based symptom extraction.
+    Returns a list of symptom strings found in the transcript.
+    This runs independently and can be replaced by a proper NLP model."""
+    symptom_keywords = [
+        "fever", "pain", "cough", "cold", "headache", "vomiting", "diarrhea",
+        "rash", "swelling", "fatigue", "dizziness", "nausea", "bleeding",
+        "breathing", "chest", "throat", "ear", "eye", "stomach", "back",
+        # Hindi
+        "बुखार", "दर्द", "खांसी", "सिरदर्द", "उल्टी", "कफ", "सूजन",
+        # Tamil
+        "காய்ச்சல்", "வலி", "இருமல்",
+    ]
+    lower = transcript.lower()
+    return [kw for kw in symptom_keywords if kw.lower() in lower]
+
+
 class TriageRequestDoc(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
@@ -136,8 +211,13 @@ class TriageRequestDoc(BaseModel):
     transcript: str = ""
     summary: str = ""
     urgency: str = "home"
+    confidence: float = 1.0
     advice: str = ""
     spoken: str = ""
+    symptoms: List[str] = Field(default_factory=list)
+    red_flags: List[str] = Field(default_factory=list)
+    flagged: bool = False
+    disclaimer: str = DISCLAIMER
     source: str = "web"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -198,8 +278,73 @@ Urgency rules:
 Always be safe: if unsure, escalate. Never give specific drug prescriptions. Encourage seeing a health worker."""
 
 
-async def run_triage(transcript: str, language: str, caller: str, source: str) -> TriageRequestDoc:
+async def run_triage(transcript: str, language: str, caller: Optional[str], source: str) -> TriageRequestDoc:
+    """Phase 2 pipeline: red-flag gate → LLM triage → rule-based fallback.
+    Red-flag check is a hard invariant that fires BEFORE any LLM call."""
+    db = get_db()
     lang = LANGS.get(language, LANGS["hi"])
+    data: Optional[Dict[str, Any]] = None
+
+    # Sanitize input before passing to LLM (basic prompt-injection hygiene)
+    safe_transcript = transcript.replace("</", "< /").replace("<script", "< script")[:2000]
+
+    # Phase 2 — Stage 0: Extract symptoms (independently callable NLP stage)
+    symptoms = extract_symptoms(safe_transcript)
+
+    # -----------------------------------------------------------------------
+    # SAFETY INVARIANT: Red-flag check runs FIRST, before any LLM call.
+    # If red flags are present, urgency is forced to 'emergency' and the
+    # LLM is never consulted. This cannot be overridden by any model output.
+    # See SECURITY.md for the full policy statement.
+    # -----------------------------------------------------------------------
+    red_flags = check_red_flags(safe_transcript)
+    if red_flags:
+        logger.warning(f"RED FLAG OVERRIDE triggered for caller={caller}: {red_flags}")
+        spoken_map = {
+            "hi": "आपके लक्षण बहुत गंभीर हैं। कृपया तुरंत नजदीकी अस्पताल जाएँ या आपातकालीन सेवा से संपर्क करें। यह तत्काल आपातकालीन स्थिति है।",
+            "en": "Your symptoms are very serious. Please go to the nearest hospital immediately or call emergency services. This is an emergency.",
+            "ta": "உங்கள் அறிகுறிகள் மிகவும் தீவிரமானவை. உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும் அல்லது அவசர சேவைகளை அழைக்கவும்.",
+        }
+        data = {
+            "urgency": "emergency",
+            "confidence": 1.0,
+            "summary": f"RED FLAG: {', '.join(red_flags[:3])}",
+            "advice": "Seek emergency medical care immediately. Call emergency services or go to the nearest hospital now.",
+            "spoken": spoken_map.get(language, spoken_map["en"]),
+        }
+        doc = TriageRequestDoc(
+            caller=caller or "Anonymous",
+            language=language,
+            transcript=transcript,
+            summary=data["summary"],
+            urgency="emergency",
+            confidence=1.0,
+            advice=data["advice"],
+            spoken=data["spoken"],
+            symptoms=symptoms,
+            red_flags=red_flags,
+            flagged=True,
+            source=source,
+        )
+        doc_dict = doc.to_mongo()
+        if db is not None:
+            try:
+                res = await db.triage_requests.insert_one(doc_dict)
+                doc.id = str(res.inserted_id)
+            except Exception as e:
+                logger.warning(f"Mongo insert error: {e}")
+                doc.id = str(ObjectId())
+                doc_dict["_id"] = ObjectId(doc.id)
+                IN_MEMORY_TRIAGE_REQUESTS.insert(0, doc_dict)
+        else:
+            doc.id = str(ObjectId())
+            doc_dict["_id"] = ObjectId(doc.id)
+            IN_MEMORY_TRIAGE_REQUESTS.insert(0, doc_dict)
+        return doc
+    # -----------------------------------------------------------------------
+    # End of safety gate — LLM calls happen only when no red flags detected.
+    # -----------------------------------------------------------------------
+
     data = None
 
     # 1. Primary LLM: Ollama (Nemotron / Super 3 / Cloud)
@@ -208,7 +353,7 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
             ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
             ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron")
             client_ollama = ollama.Client(host=ollama_host)
-            prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {transcript}"
+            prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {safe_transcript}"
             resp = client_ollama.generate(model=ollama_model, prompt=prompt)
             raw = resp.get('response', '').strip()
             if raw.startswith("```"):
@@ -251,7 +396,7 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
                 system_message=TRIAGE_SYSTEM.replace("{lang_name}", lang["name"]),
             ).with_model("openai", "gpt-4o")
 
-            resp = await chat.send_message(UserMessage(text=f"Patient symptoms (in {lang['name']}): {transcript}"))
+            resp = await chat.send_message(UserMessage(text=f"Patient symptoms (in {lang['name']}): {safe_transcript}"))
             raw = resp.strip() if isinstance(resp, str) else str(resp)
             if raw.startswith("```"):
                 raw = raw.strip("`")
@@ -293,7 +438,8 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
             "urgency": urgency,
             "summary": summary,
             "advice": advice,
-            "spoken": spoken_map.get(language, spoken_en)
+            "spoken": spoken_map.get(language, spoken_en),
+            "confidence": 0.7,
         }
 
     doc = TriageRequestDoc(
@@ -302,8 +448,12 @@ async def run_triage(transcript: str, language: str, caller: str, source: str) -
         transcript=transcript,
         summary=data.get("summary", ""),
         urgency=data.get("urgency", "soon"),
+        confidence=float(data.get("confidence", 0.85)),
         advice=data.get("advice", ""),
         spoken=data.get("spoken", ""),
+        symptoms=symptoms,
+        red_flags=[],
+        flagged=False,
         source=source,
     )
     doc_dict = doc.to_mongo()
@@ -402,7 +552,9 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
     w_model = get_whisper()
     if w_model is not None:
         try:
-            temp_path = f"/tmp/upload_{datetime.now(timezone.utc).timestamp()}.webm"
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, f"upload_{datetime.now(timezone.utc).timestamp()}.webm")
             with open(temp_path, "wb") as f:
                 f.write(content)
             res = w_model.transcribe(temp_path, language=lang.get("whisper", "hi"))
@@ -453,6 +605,7 @@ async def triage_text(body: TextTriageInput):
 
 @api_router.get("/triage/requests")
 async def list_requests(email: str = Depends(require_auth)):
+    db = get_db()
     docs = None
     if db is not None:
         try:
@@ -468,6 +621,7 @@ async def list_requests(email: str = Depends(require_auth)):
 
 @api_router.get("/triage/stats")
 async def stats(email: str = Depends(require_auth)):
+    db = get_db()
     docs = None
     if db is not None:
         try:
@@ -515,7 +669,8 @@ async def ivr_voice():
 async def ivr_collect(request: Request):
     form = await request.form()
     digit = form.get("Digits", "1")
-    lang = {"1": "hi", "2": "en", "3": "bn", "4": "ta"}.get(digit, "hi")
+    digit_str = digit if isinstance(digit, str) else "1"
+    lang = {"1": "hi", "2": "en", "3": "bn", "4": "ta"}.get(digit_str, "hi")
     l = LANGS[lang]
     prompts = {
         "hi": "अपनी बीमारी या लक्षण बोलिए। बोलने के बाद रुक जाइए।",
@@ -536,8 +691,10 @@ async def ivr_collect(request: Request):
 @api_router.post("/ivr/result")
 async def ivr_result(request: Request, lang: str = "hi"):
     form = await request.form()
-    transcript = form.get("SpeechResult", "").strip()
-    caller = form.get("From", "IVR caller")
+    speech_result = form.get("SpeechResult", "")
+    transcript = speech_result.strip() if isinstance(speech_result, str) else ""
+    caller_val = form.get("From", "IVR caller")
+    caller = caller_val if isinstance(caller_val, str) else "IVR caller"
     l = LANGS.get(lang, LANGS["hi"])
     if not transcript:
         body = f'<Say voice="{l["polly"]}">Sorry, we could not hear you. Goodbye.</Say><Hangup/>'

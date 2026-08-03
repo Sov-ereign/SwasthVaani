@@ -1,6 +1,7 @@
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Mic, Phone, Activity, ShieldCheck, Languages, ArrowRight, Stethoscope, Radio, HeartPulse, Sparkles, UserCheck, Play } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Mic, Phone, Activity, ShieldCheck, Languages, ArrowRight, Stethoscope, Radio, HeartPulse, Sparkles, UserCheck, Play, Search, AlertTriangle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -10,7 +11,67 @@ const fade = (d = 0) => ({
     transition: { duration: 0.6, delay: d, ease: [0.22, 1, 0.36, 1] },
 });
 
+
 export default function Landing() {
+    const [step, setStep] = useState(0);
+
+    const SIMULATED_PIPELINE = [
+        {
+            stage: "1. Voice Input",
+            text: "मुझे छाती में दर्द है और सांस नहीं आ रही",
+            action: "Pulsing audio capture...",
+            icon: Mic,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            border: "border-orange-500/20"
+        },
+        {
+            stage: "2. Indic Speech-to-Text",
+            text: '"मुझे छाती में दर्द है..."',
+            action: "Transcribed via Whisper...",
+            icon: Languages,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            border: "border-indigo-500/20"
+        },
+        {
+            stage: "3. Symptom Extraction",
+            text: "Symptoms: ['दर्द', 'सांस की तकलीफ']",
+            action: "Extracting clinical keywords...",
+            icon: Search,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            border: "border-amber-500/20"
+        },
+        {
+            stage: "4. Triage & Safety Gate",
+            text: "Urgency: EMERGENCY 🚨",
+            action: "Flagged case locked (no override)",
+            icon: AlertTriangle,
+            color: "text-destructive",
+            bg: "bg-destructive/10",
+            border: "border-destructive/30"
+        },
+        {
+            stage: "5. Speech Synthesis",
+            text: "तुरंत अस्पताल जाएं या 108 पर कॉल करें।",
+            action: "Playing audio feedback...",
+            icon: Radio,
+            color: "text-green-500",
+            bg: "bg-green-500/10",
+            border: "border-green-500/20"
+        }
+    ];
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setStep((s) => (s + 1) % SIMULATED_PIPELINE.length);
+        }, 3000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const cur = SIMULATED_PIPELINE[step];
+
     return (
         <div className="min-h-screen grain-bg text-foreground relative overflow-hidden" data-testid="landing-page">
             {/* Header */}
@@ -95,36 +156,39 @@ export default function Landing() {
                 </div>
 
                 <motion.div {...fade(0.2)} className="lg:col-span-5 relative">
-                    <div className="absolute -inset-4 gradient-bg rounded-[2.5rem] rotate-3 opacity-20 blur-xl" />
-                    <div className="relative rounded-[2.5rem] overflow-hidden glass-card p-3 shadow-2xl border-2 border-white/80">
-                        <img
-                            src="https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?crop=entropy&cs=srgb&fm=jpg&q=85&w=1000"
-                            alt="Rural healthcare doctor and patient"
-                            className="rounded-[2rem] w-full h-[460px] object-cover"
-                            data-testid="hero-image"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent rounded-[2.5rem]" />
-                        
-                        {/* Live Floating Emergency Card */}
-                        <motion.div 
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{ delay: 0.5, duration: 0.5 }}
-                            className="absolute bottom-6 left-6 right-6 glass-card p-4 rounded-2xl border border-white/90 shadow-xl flex items-center justify-between"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 rounded-2xl bg-destructive text-white flex items-center justify-center glow-destructive animate-bounce">
-                                    <HeartPulse className="w-6 h-6" />
-                                </div>
-                                <div>
-                                    <p className="font-head font-extrabold text-sm text-foreground">Emergency Detected</p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">"বুকে প্রবল ব্যথা" → Immediate PHC Alert</p>
-                                </div>
+                    <div className="absolute -inset-4 bg-primary/10 rounded-[2rem] rotate-3 blur-md" />
+                    <img
+                        src="https://images.unsplash.com/photo-1779006277040-67543ea167b1?crop=entropy&cs=srgb&fm=jpg&q=85&w=1000"
+                        alt="Rural health worker caring for a patient"
+                        className="relative rounded-[2rem] w-full h-[440px] object-cover shadow-xl border-2 border-white/80"
+                        data-testid="hero-image"
+                    />
+                    <div className={`absolute -bottom-6 -left-6 bg-card border ${cur.border} rounded-2xl shadow-xl p-5 flex flex-col gap-2 max-w-sm w-[290px] md:w-[320px] transition-all duration-300`}>
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                                {cur.stage}
+                            </span>
+                            <div className={`w-2 h-2 rounded-full ${step === 3 ? 'bg-destructive animate-ping' : 'bg-green-500'}`} />
+                        </div>
+                        <div className="flex items-start gap-3 mt-1">
+                            <div className={`w-10 h-10 rounded-xl ${cur.bg} flex items-center justify-center shrink-0`}>
+                                <cur.icon className={`w-5 h-5 ${cur.color}`} />
                             </div>
-                            <Badge className="bg-destructive text-white rounded-full font-bold px-3 py-1 text-[11px] shadow-sm">
-                                🚨 Urgent
-                            </Badge>
-                        </motion.div>
+                            <div className="min-w-0 flex-1">
+                                <p className="font-bold text-sm text-foreground truncate">{cur.text}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">{cur.action}</p>
+                            </div>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="w-full bg-muted h-1 rounded-full overflow-hidden mt-2">
+                            <motion.div 
+                                key={step}
+                                className="bg-primary h-full"
+                                initial={{ width: "0%" }}
+                                animate={{ width: "100%" }}
+                                transition={{ duration: 3, ease: "linear" }}
+                            />
+                        </div>
                     </div>
                 </motion.div>
             </section>
