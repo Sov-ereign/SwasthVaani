@@ -270,7 +270,6 @@ function DashboardView({ onLogout }) {
                             </div>
                         </div>
                     </div>
-                    </div>
                 ) : (
                     <>
                         {/* Filter and Search Bar */}
