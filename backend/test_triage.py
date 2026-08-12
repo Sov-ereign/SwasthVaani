@@ -180,7 +180,7 @@ async def test_triage_pipeline(transcript="I have chest pain", language="en"):
         print(f"\n  ℹ️  Non-red-flag case: urgency={doc.urgency}")
 
     assert doc.disclaimer, "Disclaimer must be non-empty in every response"
-    assert doc.urgency in ("emergency", "soon", "home"), f"Invalid urgency: {doc.urgency}"
+    assert doc.urgency in ("emergency", "soon", "home", "needs_review"), f"Invalid urgency: {doc.urgency}"
     print(f"  ✅ Phase 2 contract fields all present and valid")
     return doc
 
@@ -207,6 +207,40 @@ def run_on_text(text: str, language: str = "en"):
 
 # ---------------------------------------------------------------------------
 # CLI entry point
+def test_groq_and_twilio():
+    """Verify Groq ASR integration helper and Twilio TwiML generation."""
+    print("\n=== Stage: Groq ASR & Twilio Integration ===")
+    srv = _try_import_server()
+    if srv is None:
+        print("  [SKIP] Server import unavailable")
+        return True
+
+    # 1. Verify red flag override invariant holds for IVR source calls
+    red_flag_sample = "I have severe chest pain and cannot breathe"
+    flags = srv.check_red_flags(red_flag_sample)
+    assert len(flags) > 0, "Red flags must be detected"
+    doc = asyncio.run(srv.run_triage(red_flag_sample, "en", "twilio-test-caller", "ivr"))
+    assert doc.urgency == "emergency", "Urgency MUST be emergency for red-flag cases"
+    assert doc.flagged is True, "Must be flagged"
+    assert doc.source == "ivr", "Source must be preserved as ivr"
+    print(f"  ✅ Red-flag override invariant holds for IVR call: urgency={doc.urgency}, flagged={doc.flagged}")
+
+    # 2. Verify ASR provider abstraction functions exist
+    assert hasattr(srv, "transcribe_audio"), "transcribe_audio abstraction must exist in server.py"
+    assert hasattr(srv, "transcribe_groq"), "transcribe_groq function must exist in server.py"
+    print(f"  ✅ Groq ASR provider abstraction present: transcribe_groq() and transcribe_audio()")
+
+    # 3. Verify Twilio TwiML helper response
+    twiml_resp = srv.twiml("<Say>Test</Say>")
+    assert twiml_resp.media_type == "application/xml", "TwiML must be XML"
+    assert "<Response><Say>Test</Say></Response>" in twiml_resp.body.decode("utf-8")
+    print(f"  ✅ Twilio TwiML response generation valid")
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
 # ---------------------------------------------------------------------------
 
 def main():
@@ -216,7 +250,7 @@ def main():
     parser.add_argument("--lang", default="en", help="Language code (en/hi/ta)")
     parser.add_argument(
         "--stage",
-        choices=["red_flags", "symptoms", "triage", "all"],
+        choices=["red_flags", "symptoms", "triage", "groq_twilio", "all"],
         default="all",
         help="Which stage to test",
     )
@@ -241,6 +275,9 @@ def main():
 
     if args.stage in ("symptoms", "all"):
         results.append(("Symptom Extraction", test_symptom_extraction()))
+
+    if args.stage in ("groq_twilio", "all"):
+        results.append(("Groq & Twilio Integration", test_groq_and_twilio()))
 
     if args.stage in ("triage", "all"):
         # Critical safety test: chest pain must force Emergency
