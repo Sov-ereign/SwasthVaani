@@ -3,9 +3,9 @@ import asyncio
 import io
 import json
 import logging
+from urllib.parse import urlparse, urlunparse
 
 import base64
-import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Annotated, Any, Dict
@@ -23,6 +23,24 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
 from bson import ObjectId
 import jwt
+import time
+from collections import defaultdict
+
+# Simple In-Memory Rate Limiting
+RATE_LIMIT_STORE = defaultdict(list)
+RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "15"))
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))
+
+def check_rate_limit(key: str):
+    now = time.time()
+    RATE_LIMIT_STORE[key] = [t for t in RATE_LIMIT_STORE[key] if now - t < RATE_LIMIT_WINDOW]
+    if len(RATE_LIMIT_STORE[key]) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too Many Requests")
+    RATE_LIMIT_STORE[key].append(now)
+
+async def rate_limit_ip(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"ip:{client_ip}")
 
 
 # Optional engine imports
@@ -219,6 +237,10 @@ class TriageRequestDoc(BaseModel):
     flagged: bool = False
     disclaimer: str = DISCLAIMER
     source: str = "web"
+    asr_provider: str = "groq_whisper"
+    llm_provider: str = "groq_llama3.3"
+    latency_ms: int = 0
+    is_seed_data: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
@@ -278,12 +300,22 @@ Urgency rules:
 Always be safe: if unsure, escalate. Never give specific drug prescriptions. Encourage seeing a health worker."""
 
 
-async def run_triage(transcript: str, language: str, caller: Optional[str], source: str) -> TriageRequestDoc:
+async def run_triage(
+    transcript: str,
+    language: str,
+    caller: Optional[str],
+    source: str,
+    asr_provider: str = "groq_whisper",
+    start_time: Optional[float] = None
+) -> TriageRequestDoc:
     """Phase 2 pipeline: red-flag gate → LLM triage → rule-based fallback.
     Red-flag check is a hard invariant that fires BEFORE any LLM call."""
+    if start_time is None:
+        start_time = time.time()
     db = get_db()
     lang = LANGS.get(language, LANGS["hi"])
     data: Optional[Dict[str, Any]] = None
+    used_llm_provider = "rule_fallback"
 
     # Sanitize input before passing to LLM (basic prompt-injection hygiene)
     safe_transcript = transcript.replace("</", "< /").replace("<script", "< script")[:2000]
@@ -301,17 +333,19 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
     if red_flags:
         logger.warning(f"RED FLAG OVERRIDE triggered for caller={caller}: {red_flags}")
         spoken_map = {
-            "hi": "आपके लक्षण बहुत गंभीर हैं। कृपया तुरंत नजदीकी अस्पताल जाएँ या आपातकालीन सेवा से संपर्क करें। यह तत्काल आपातकालीन स्थिति है।",
-            "en": "Your symptoms are very serious. Please go to the nearest hospital immediately or call emergency services. This is an emergency.",
-            "ta": "உங்கள் அறிகுறிகள் மிகவும் தீவிரமானவை. உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும் அல்லது அவசர சேவைகளை அழைக்கவும்.",
+            "hi": "आपके लक्षण बहुत गंभीर हैं। कृपया तुरंत नजदीकी अस्पताल जाएँ या आपातकालीन सेवा से संपर्क करें। यह तत्काल आपातकालीन स्थिति है। यह केवल प्रारंभिक सलाह है, निदान नहीं। हमेशा डॉक्टर से सलाह लें।",
+            "en": "Your symptoms are very serious. Please go to the nearest hospital immediately or call emergency services. This is an emergency. This is triage guidance only, not a medical diagnosis.",
+            "ta": "உங்கள் அறிகுறிகள் மிகவும் தீவிரமானவை. உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும் அல்லது அவசர சேவைகளை அழைக்கவும். இது ஆரம்ப வழிகாட்டுதல் மட்டுமே.",
         }
         data = {
             "urgency": "emergency",
             "confidence": 1.0,
             "summary": f"RED FLAG: {', '.join(red_flags[:3])}",
-            "advice": "Seek emergency medical care immediately. Call emergency services or go to the nearest hospital now.",
+            "advice": "Seek emergency medical care immediately. Call emergency services or go to the nearest hospital now. " + DISCLAIMER,
             "spoken": spoken_map.get(language, spoken_map["en"]),
         }
+        used_llm_provider = "red_flag_override"
+        latency_ms = max(50, int((time.time() - start_time) * 1000))
         doc = TriageRequestDoc(
             caller=caller or "Anonymous",
             language=language,
@@ -325,6 +359,9 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
             red_flags=red_flags,
             flagged=True,
             source=source,
+            asr_provider=asr_provider,
+            llm_provider=used_llm_provider,
+            latency_ms=latency_ms,
         )
         doc_dict = doc.to_mongo()
         if db is not None:
@@ -342,38 +379,21 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
             IN_MEMORY_TRIAGE_REQUESTS.insert(0, doc_dict)
         return doc
     # -----------------------------------------------------------------------
-    # End of safety gate — LLM calls happen only when no red flags detected.
+    # LLM Triage Cascade (Groq -> Ollama -> Emergent -> Rule-based Fallback)
+    # Respects LLM_PROVIDER env config (options: groq | ollama | emergent | auto)
     # -----------------------------------------------------------------------
-
     data = None
+    llm_prov = os.environ.get("LLM_PROVIDER", "auto").lower()
+    g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
 
-    # 1. Primary LLM: Ollama (Nemotron / Super 3 / Cloud)
-    if HAS_OLLAMA:
-        try:
-            ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-            ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron")
-            client_ollama = ollama.Client(host=ollama_host)
-            prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {safe_transcript}"
-            resp = client_ollama.generate(model=ollama_model, prompt=prompt)
-            raw = resp.get('response', '').strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                raw = raw[raw.find("{"):]
-            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
-            logger.info("Successfully triaged via Ollama Nemotron")
-        except Exception as e:
-            logger.warning(f"Ollama Nemotron triage fallback: {e}")
-
-    # 2. Secondary Fallback LLM: Groq API
-    if not data and HAS_GROQ and (GROQ_API_KEY or os.environ.get("GROQ_API_KEY")):
-        try:
-            g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
+    async def _try_groq():
+        if HAS_GROQ and g_key:
             g_client = Groq(api_key=g_key)
             completion = g_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
                 messages=[
                     {"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])},
-                    {"role": "user", "content": f"Patient symptoms (in {lang['name']}): {transcript}"}
+                    {"role": "user", "content": f"Patient symptoms (in {lang['name']}): {safe_transcript}"}
                 ],
                 temperature=0.2,
                 max_tokens=300,
@@ -382,14 +402,39 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
             if raw.startswith("```"):
                 raw = raw.strip("`")
                 raw = raw[raw.find("{"):]
-            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
             logger.info("Successfully triaged via Groq Llama 3.3")
-        except Exception as e:
-            logger.warning(f"Groq API triage fallback: {e}")
+            return json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        return None
 
-    # 3. Tertiary Fallback LLM: Emergent / OpenAI LLM
-    if not data and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
-        try:
+    async def _try_ollama():
+        if HAS_OLLAMA:
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+            ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron")
+            # Quick socket check to fail fast if Ollama server is offline
+            import socket
+            parsed = urlparse(ollama_host)
+            host, port = parsed.hostname or "localhost", parsed.port or 11434
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect((host, port))
+                s.close()
+            except Exception:
+                return None
+
+            client_ollama = ollama.Client(host=ollama_host)
+            prompt = f"{TRIAGE_SYSTEM.replace('{lang_name}', lang['name'])}\n\nPatient symptoms (in {lang['name']}): {safe_transcript}"
+            resp = client_ollama.generate(model=ollama_model, prompt=prompt)
+            raw = resp.get('response', '').strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                raw = raw[raw.find("{"):]
+            logger.info("Successfully triaged via Ollama Nemotron")
+            return json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        return None
+
+    async def _try_emergent():
+        if HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
             chat = LlmChat(
                 api_key=EMERGENT_LLM_KEY,
                 session_id=f"triage-{datetime.now(timezone.utc).timestamp()}",
@@ -401,9 +446,26 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
             if raw.startswith("```"):
                 raw = raw.strip("`")
                 raw = raw[raw.find("{"):]
-            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+            logger.info("Successfully triaged via Emergent GPT-4o")
+            return json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        return None
+
+    if llm_prov == "ollama":
+        providers = [_try_ollama, _try_groq, _try_emergent]
+    elif llm_prov == "emergent":
+        providers = [_try_emergent, _try_groq, _try_ollama]
+    else:  # 'groq' or 'auto'
+        providers = [_try_groq, _try_ollama, _try_emergent]
+
+    for prov_name, prov_fn in [("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama), ("emergent_gpt4o", _try_emergent)]:
+        try:
+            res = await prov_fn()
+            if res and isinstance(res, dict) and "urgency" in res:
+                data = res
+                used_llm_provider = prov_name
+                break
         except Exception as e:
-            logger.error(f"Emergent LLM triage fallback: {e}")
+            logger.warning(f"LLM provider '{prov_name}' failed: {e}")
 
     # 4. Rule-based safety engine fallback (supporting English, Hindi, Bengali, Tamil)
     if not data:
@@ -442,6 +504,20 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
             "confidence": 0.7,
         }
 
+    if data:
+        disc_map = {
+            "hi": " यह केवल प्रारंभिक सलाह है, निदान नहीं। हमेशा डॉक्टर से सलाह लें।",
+            "en": " This is triage guidance only, not a medical diagnosis. Always consult a doctor.",
+            "bn": " এটি শুধুমাত্র প্রাথমিক পরামর্শ। সর্বদা ডাক্তারের পরামর্শ নিন।",
+            "ta": " இது ஆரம்ப வழிகாட்டுதல் மட்டுமே. மருத்துவரை அணுகவும்."
+        }
+        loc_disc = disc_map.get(language, disc_map["en"])
+        if loc_disc not in data.get("spoken", ""):
+            data["spoken"] = data.get("spoken", "") + loc_disc
+        if DISCLAIMER not in data.get("advice", ""):
+            data["advice"] = data.get("advice", "") + "\n" + DISCLAIMER
+
+    latency_ms = max(50, int((time.time() - start_time) * 1000))
     doc = TriageRequestDoc(
         caller=caller or "Anonymous",
         language=language,
@@ -455,7 +531,23 @@ async def run_triage(transcript: str, language: str, caller: Optional[str], sour
         red_flags=[],
         flagged=False,
         source=source,
+        asr_provider=asr_provider,
+        llm_provider=used_llm_provider,
+        latency_ms=latency_ms,
     )
+
+    # Tier 3.1: Low-confidence human operator fallback (< 0.65)
+    if doc.confidence < 0.65:
+        doc.urgency = "needs_review"
+        doc.summary = f"Needs Review (confidence: {int(doc.confidence*100)}%)"
+        doc.advice = "Patient symptoms require human clinical review due to low confidence score. " + DISCLAIMER
+        spoken_review = {
+            "hi": "आपकी बीमारी के लक्षण स्पष्ट नहीं हो सके। स्वास्थ्य कार्यकर्ता आपसे संपर्क करेंगे। यह केवल प्रारंभिक सलाह है।",
+            "en": "Your symptoms could not be clearly confirmed. A health worker will follow up with you. This is triage guidance only.",
+            "bn": "আপনার লক্ষণগুলি স্পষ্ট নয়। একজন স্বাস্থ্যকর্মী শীঘ্রই আপনার সাথে যোগাযোগ করবেন।",
+            "ta": "உங்கள் அறிகுறிகள் தெளிவாக இல்லை. சுகாதார ஊழியர் தொடர்புகொள்வார்."
+        }
+        doc.spoken = spoken_review.get(language, spoken_review["en"])
     doc_dict = doc.to_mongo()
 
     inserted = False
@@ -539,46 +631,138 @@ async def me(email: str = Depends(require_auth)):
     return {"email": email}
 
 
+# -----------------------------------------------------------------------
+# ASR Provider Abstraction (Groq Whisper-large-v3, Local Whisper, Emergent)
+# Configured via ASR_PROVIDER env var (options: groq | whisper_local | openai | auto)
+# -----------------------------------------------------------------------
+
+def transcribe_groq(content: bytes, language: str = "hi", filename: str = "audio.webm") -> str:
+    """Transcribe audio using Groq Whisper API (whisper-large-v3)."""
+    g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
+    if not g_key or not HAS_GROQ:
+        return ""
+    try:
+        g_client = Groq(api_key=g_key)
+        ext = filename.split(".")[-1].lower()
+        if ext not in ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm", "ogg"]:
+            ext = "webm"
+        lang_info = LANGS.get(language, LANGS["hi"])
+        whisper_lang = lang_info.get("whisper", "hi")
+        
+        file_tuple = (f"speech.{ext}", content, f"audio/{ext}")
+        transcription = g_client.audio.transcriptions.create(
+            file=file_tuple,
+            model="whisper-large-v3",
+            language=whisper_lang,
+            response_format="json",
+        )
+        text = transcription.text if hasattr(transcription, "text") else getattr(transcription, "text", str(transcription))
+        logger.info(f"Groq Whisper-large-v3 transcribed: {text}")
+        return text.strip()
+    except Exception as e:
+        logger.error(f"Groq Whisper transcription error: {e}")
+        return ""
+
+
+def transcribe_local_whisper(content: bytes, language: str = "hi") -> str:
+    """Transcribe audio using local Whisper model."""
+    w_model = get_whisper()
+    if w_model is None:
+        return ""
+    try:
+        import tempfile
+        lang_info = LANGS.get(language, LANGS["hi"])
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"upload_{datetime.now(timezone.utc).timestamp()}.webm")
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        res = w_model.transcribe(temp_path, language=lang_info.get("whisper", "hi"))
+        text = res.get("text", "").strip()
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        logger.info(f"Local Whisper transcribed: {text}")
+        return text
+    except Exception as e:
+        logger.error(f"Local Whisper transcription error: {e}")
+        return ""
+
+
+async def transcribe_emergent_stt(content: bytes, language: str = "hi", filename: str = "audio.webm") -> str:
+    """Transcribe audio using Emergent OpenAI SpeechToText API."""
+    if not (HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key"):
+        return ""
+    try:
+        ext = filename.split(".")[-1].lower()
+        if ext not in ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]:
+            ext = "webm"
+        lang_info = LANGS.get(language, LANGS["hi"])
+        bio = io.BytesIO(content)
+        bio.name = f"audio.{ext}"
+        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+        result = await stt.transcribe(file=bio, model="whisper-1", response_format="json", language=lang_info["whisper"])
+        text = result.text if hasattr(result, "text") else str(result)
+        logger.info(f"Emergent STT transcribed: {text}")
+        return text.strip()
+    except Exception as e:
+        logger.error(f"Emergent STT transcription error: {e}")
+        return ""
+
+
+async def transcribe_audio(content: bytes, language: str = "hi", filename: str = "audio.webm") -> tuple[str, str]:
+    """Configurable ASR pipeline respecting ASR_PROVIDER setting.
+    Returns tuple of (transcript_text, asr_provider_name)."""
+    provider = os.environ.get("ASR_PROVIDER", "auto").lower()
+    g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
+    
+    if provider == "groq" or (provider == "auto" and g_key):
+        methods = [
+            ("groq_whisper_v3", lambda: transcribe_groq(content, language, filename)),
+            ("whisper_local", lambda: transcribe_local_whisper(content, language)),
+            ("openai_whisper", lambda: transcribe_emergent_stt(content, language, filename)),
+        ]
+    elif provider == "whisper_local":
+        methods = [
+            ("whisper_local", lambda: transcribe_local_whisper(content, language)),
+            ("groq_whisper_v3", lambda: transcribe_groq(content, language, filename)),
+            ("openai_whisper", lambda: transcribe_emergent_stt(content, language, filename)),
+        ]
+    elif provider == "openai":
+        methods = [
+            ("openai_whisper", lambda: transcribe_emergent_stt(content, language, filename)),
+            ("groq_whisper_v3", lambda: transcribe_groq(content, language, filename)),
+            ("whisper_local", lambda: transcribe_local_whisper(content, language)),
+        ]
+    else:
+        methods = [
+            ("whisper_local", lambda: transcribe_local_whisper(content, language)),
+            ("groq_whisper_v3", lambda: transcribe_groq(content, language, filename)),
+            ("openai_whisper", lambda: transcribe_emergent_stt(content, language, filename)),
+        ]
+
+    for name, fn in methods:
+        try:
+            res = fn()
+            if asyncio.iscoroutine(res):
+                res = await res
+            if res and isinstance(res, str) and res.strip():
+                logger.info(f"ASR successful via provider '{name}'")
+                return res.strip(), name
+        except Exception as e:
+            logger.warning(f"ASR provider '{name}' failed: {e}")
+
+    return "", "none"
+
+
 @api_router.post("/triage/voice")
-async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi"), caller: str = Form("Web user")):
+async def triage_voice(request: Request, audio: UploadFile = File(...), language: str = Form("hi"), caller: str = Form("Web user")):
+    start_t = time.time()
+    await rate_limit_ip(request)
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty audio")
     
-    transcript = ""
-    lang = LANGS.get(language, LANGS["hi"])
-
-    # 1. Local Whisper Small model for speech-to-text (Supports Bengali, Hindi, English, Tamil)
-    w_model = get_whisper()
-    if w_model is not None:
-        try:
-            import tempfile
-            temp_dir = tempfile.gettempdir()
-            temp_path = os.path.join(temp_dir, f"upload_{datetime.now(timezone.utc).timestamp()}.webm")
-            with open(temp_path, "wb") as f:
-                f.write(content)
-            res = w_model.transcribe(temp_path, language=lang.get("whisper", "hi"))
-            transcript = res.get("text", "").strip()
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            logger.info(f"Whisper Small local STT transcribed: {transcript}")
-        except Exception as e:
-            logger.error(f"Local Whisper Small transcription error: {e}")
-
-    # 2. Try Emergent STT fallback
-    if not transcript and HAS_EMERGENT and EMERGENT_LLM_KEY and EMERGENT_LLM_KEY != "demo-key":
-        fname = audio.filename or "audio.webm"
-        ext = fname.split(".")[-1].lower()
-        if ext not in ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]:
-            ext = "webm"
-        bio = io.BytesIO(content)
-        bio.name = f"audio.{ext}"
-        stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-        try:
-            result = await stt.transcribe(file=bio, model="whisper-1", response_format="json", language=lang["whisper"])
-            transcript = result.text if hasattr(result, "text") else str(result)
-        except Exception as e:
-            logger.error(f"Emergent STT transcription error: {e}")
+    filename = audio.filename or "audio.webm"
+    transcript, asr_prov = await transcribe_audio(content, language, filename)
 
     if not transcript.strip():
         default_transcripts = {
@@ -588,17 +772,20 @@ async def triage_voice(audio: UploadFile = File(...), language: str = Form("hi")
             "ta": "எனக்கு காய்ச்சல் மற்றும் நெஞ்சு வலி உள்ளது"
         }
         transcript = default_transcripts.get(language, "I have fever and chest pain")
+        asr_prov = "default_fallback"
 
-    doc = await run_triage(transcript, language, caller, "web")
+    doc = await run_triage(transcript, language, caller, "web", asr_provider=asr_prov, start_time=start_t)
     audio_b64 = await synth_speech(doc.spoken or doc.advice, language)
     return {**doc.model_dump(), "audio_base64": audio_b64}
 
 
 @api_router.post("/triage/text")
-async def triage_text(body: TextTriageInput):
+async def triage_text(request: Request, body: TextTriageInput):
+    start_t = time.time()
+    await rate_limit_ip(request)
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Empty text")
-    doc = await run_triage(body.text, body.language, body.caller, "web")
+    doc = await run_triage(body.text, body.language, body.caller, "web", asr_provider="n/a (text input)", start_time=start_t)
     audio_b64 = await synth_speech(doc.spoken or doc.advice, body.language)
     return {**doc.model_dump(), "audio_base64": audio_b64}
 
@@ -646,7 +833,47 @@ async def stats(email: str = Depends(require_auth)):
     return {"total": total, "by_urgency": by_urgency, "emergencies_today": emergencies_today, "by_source": by_source}
 
 
-# ---------------- Twilio IVR (TwiML) ----------------
+# ---------------- Twilio IVR (TwiML & Webhook Security) ----------------
+
+try:
+    from twilio.request_validator import RequestValidator
+    HAS_TWILIO = True
+except ImportError:
+    HAS_TWILIO = False
+
+
+async def validate_twilio_request(request: Request):
+    """Validate X-Twilio-Signature header to ensure request originated from Twilio."""
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    if not auth_token or not HAS_TWILIO:
+        # If TWILIO_AUTH_TOKEN is not configured, skip validation for local dev/mocking
+        return
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not signature:
+        logger.warning("Missing X-Twilio-Signature header on IVR webhook call")
+        raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
+
+    url = str(request.url)
+    public_url = os.environ.get("PUBLIC_WEBHOOK_URL", "")
+    if public_url:
+        parsed_pub = urlparse(public_url)
+        parsed_req = urlparse(url)
+        url = urlunparse((
+            parsed_pub.scheme or parsed_req.scheme,
+            parsed_pub.netloc or parsed_req.netloc,
+            parsed_req.path,
+            parsed_req.params,
+            parsed_req.query,
+            parsed_req.fragment
+        ))
+
+    form = await request.form()
+    data = {k: v for k, v in form.items() if isinstance(v, str)}
+    validator = RequestValidator(auth_token)
+    if not validator.validate(url, data, signature):
+        logger.warning(f"Invalid X-Twilio-Signature for request URL: {url}")
+        raise HTTPException(status_code=403, detail="Invalid Twilio Signature")
+
 
 def twiml(body: str) -> Response:
     return Response(content=f'<?xml version="1.0" encoding="UTF-8"?><Response>{body}</Response>',
@@ -654,19 +881,21 @@ def twiml(body: str) -> Response:
 
 
 @api_router.post("/ivr/voice")
-async def ivr_voice():
+async def ivr_voice(request: Request):
+    await validate_twilio_request(request)
     body = (
         '<Gather input="dtmf" numDigits="1" action="/api/ivr/collect" method="POST" timeout="6">'
         '<Say voice="Polly.Aditi">Welcome to Swasth Vaani, your voice health helper. '
         'For Hindi press 1. For English press 2. For Bengali press 3. For Tamil press 4.</Say>'
         '</Gather>'
-        '<Redirect method="POST">/api/ivr/voice</Redirect>'
+        '<Redirect method="POST">/api/ivr/collect?Digits=1</Redirect>'
     )
     return twiml(body)
 
 
 @api_router.post("/ivr/collect")
 async def ivr_collect(request: Request):
+    await validate_twilio_request(request)
     form = await request.form()
     digit = form.get("Digits", "1")
     digit_str = digit if isinstance(digit, str) else "1"
@@ -674,7 +903,7 @@ async def ivr_collect(request: Request):
     l = LANGS[lang]
     prompts = {
         "hi": "अपनी बीमारी या लक्षण बोलिए। बोलने के बाद रुक जाइए।",
-        "en": "Please describe your symptoms after the beep, then pause.",
+        "en": "Please describe your symptoms clearly after the tone, then pause.",
         "bn": "বিープের পর আপনার লক্ষণগুলি বলুন, তারপর থামুন।",
         "ta": "உங்கள் அறிகுறிகளைச் சொல்லுங்கள், பிறகு நிறுத்துங்கள்.",
     }
@@ -683,30 +912,196 @@ async def ivr_collect(request: Request):
         f'action="/api/ivr/result?lang={lang}" method="POST">'
         f'<Say voice="{l["polly"]}">{prompts[lang]}</Say>'
         f'</Gather>'
-        f'<Redirect method="POST">/api/ivr/collect</Redirect>'
+        f'<Record maxLength="30" action="/api/ivr/result?lang={lang}" method="POST"/>'
     )
     return twiml(body)
 
 
 @api_router.post("/ivr/result")
 async def ivr_result(request: Request, lang: str = "hi"):
+    start_t = time.time()
+    await validate_twilio_request(request)
     form = await request.form()
     speech_result = form.get("SpeechResult", "")
-    transcript = speech_result.strip() if isinstance(speech_result, str) else ""
-    caller_val = form.get("From", "IVR caller")
-    caller = caller_val if isinstance(caller_val, str) else "IVR caller"
+    recording_url = form.get("RecordingUrl", "")
+    caller_raw = form.get("From", "IVR caller")
+    caller_raw_str = caller_raw if isinstance(caller_raw, str) else "IVR caller"
+    
+    check_rate_limit(f"caller:{caller_raw_str}")
+    
+    if caller_raw_str.startswith("+") and len(caller_raw_str) > 7:
+        caller = caller_raw_str[:4] + "****" + caller_raw_str[-3:]
+    else:
+        caller = caller_raw_str
+        
     l = LANGS.get(lang, LANGS["hi"])
-    if not transcript:
-        body = f'<Say voice="{l["polly"]}">Sorry, we could not hear you. Goodbye.</Say><Hangup/>'
+    
+    transcript = speech_result.strip() if isinstance(speech_result, str) else ""
+    asr_prov = "twilio_speech"
+
+    # If audio recording URL is provided by Twilio, transcribe it via Groq/ASR pipeline
+    if not transcript and recording_url and isinstance(recording_url, str):
+        try:
+            logger.info(f"Fetching audio recording from Twilio URL: {recording_url}")
+            auth = None
+            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            if account_sid and auth_token:
+                auth = (account_sid, auth_token)
+            import requests
+            resp = requests.get(recording_url + ".mp3", auth=auth, timeout=10)
+            if resp.status_code == 200 and resp.content:
+                transcript, asr_prov = await transcribe_audio(resp.content, language=lang, filename="recording.mp3")
+                logger.info(f"Transcribed Twilio recording via ASR: '{transcript}'")
+        except Exception as e:
+            logger.error(f"Error fetching/transcribing Twilio recording: {e}")
+
+    if not transcript.strip():
+        body = f'<Say voice="{l["polly"]}">Sorry, we could not hear your symptoms. Please try calling back. Goodbye.</Say><Hangup/>'
         return twiml(body)
+
     try:
-        doc = await run_triage(transcript, lang, caller, "ivr")
+        doc = await run_triage(transcript, lang, caller, "ivr", asr_provider=asr_prov, start_time=start_t)
         spoken = doc.spoken or doc.advice
     except Exception as e:
         logger.error(f"IVR triage failed: {e}")
-        spoken = "Sorry, we could not process your request. Please consult a health worker."
+        spoken = "Sorry, we could not process your request. Please consult a health worker immediately."
+
     body = f'<Say voice="{l["polly"]}">{spoken}</Say><Say voice="{l["polly"]}">Thank you for calling Swasth Vaani.</Say><Hangup/>'
     return twiml(body)
+
+
+# Tier 3.2: IVR Confirmation Round Endpoint
+@api_router.post("/ivr/confirm")
+async def ivr_confirm(request: Request, lang: str = "hi"):
+    await validate_twilio_request(request)
+    form = await request.form()
+    digit = form.get("Digits", "1")
+    speech = form.get("SpeechResult", "")
+    import urllib.parse
+    t_encoded = request.query_params.get("transcript", "")
+    transcript = urllib.parse.unquote(t_encoded) if t_encoded else speech
+    l = LANGS.get(lang, LANGS["hi"])
+
+    # Press 1 or say yes -> confirm and execute triage
+    if str(digit) == "1" or "yes" in speech.lower() or "हाँ" in speech or "सही" in speech:
+        caller_raw = form.get("From", "IVR caller")
+        caller_raw_str = caller_raw if isinstance(caller_raw, str) else "IVR caller"
+        caller = caller_raw_str[:4] + "****" + caller_raw_str[-3:] if (caller_raw_str.startswith("+") and len(caller_raw_str) > 7) else caller_raw_str
+        doc = await run_triage(transcript, lang, caller, "ivr", asr_provider="twilio_speech")
+        spoken = doc.spoken or doc.advice
+        body = f'<Say voice="{l["polly"]}">{spoken}</Say><Say voice="{l["polly"]}">Thank you for calling Swasth Vaani.</Say><Hangup/>'
+        return twiml(body)
+    else:
+        # Press 2 -> try again
+        retry_msg = {
+            "hi": "कोई बात नहीं। कृपया अपनी बीमारी का लक्षण दोबारा बोलें।",
+            "en": "No problem. Please describe your symptoms again clearly after the tone.",
+            "bn": "কোন সমস্যা নেই। অনুগ্রহ করে টোনের পর আপনার লক্ষণগুলি আবার বলুন।",
+            "ta": "பரவாயில்லை. மீண்டும் உங்கள் அறிகுறிகளைச் சொல்லுங்கள்."
+        }
+        body = (
+            f'<Gather input="speech" language="{l["whisper"]}-IN" speechTimeout="auto" '
+            f'action="/api/ivr/result?lang={lang}" method="POST">'
+            f'<Say voice="{l["polly"]}">{retry_msg.get(lang, retry_msg["en"])}</Say>'
+            f'</Gather>'
+            f'<Record maxLength="30" action="/api/ivr/result?lang={lang}" method="POST"/>'
+        )
+        return twiml(body)
+
+
+async def seed_demo_data():
+    db = get_db()
+    count = 0
+    if db is not None:
+        try:
+            count = await db.triage_requests.count_documents({})
+        except Exception:
+            count = len(IN_MEMORY_TRIAGE_REQUESTS)
+    else:
+        count = len(IN_MEMORY_TRIAGE_REQUESTS)
+
+    if count == 0:
+        logger.info("Seeding realistic demo data for dashboard...")
+        seeds = [
+            {
+                "caller": "+91 98*** *1234",
+                "language": "hi",
+                "transcript": "तीन दिन से तेज़ बुखार है और सीने में बहुत दर्द हो रहा है",
+                "summary": "RED FLAG: सीने में दर्द",
+                "urgency": "emergency",
+                "confidence": 1.0,
+                "advice": "Seek emergency medical care immediately. Call emergency services or go to nearest hospital. " + DISCLAIMER,
+                "spoken": "आपके लक्षण बहुत गंभीर हैं। कृपया तुरंत नजदीकी अस्पताल जाएँ या आपातकालीन सेवा से संपर्क करें। यह केवल प्रारंभिक सलाह है, निदान नहीं। हमेशा डॉक्टर से सलाह लें।",
+                "symptoms": ["बुखार", "दर्द"],
+                "red_flags": ["सीने में दर्द"],
+                "flagged": True,
+                "source": "ivr",
+                "asr_provider": "groq_whisper",
+                "llm_provider": "red_flag_override",
+                "latency_ms": 140,
+                "is_seed_data": True,
+                "created_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+            },
+            {
+                "caller": "Anita (ASHA Worker)",
+                "language": "hi",
+                "transcript": "बच्चे को 2 दिन से बुखार और दस्त हो रहा है",
+                "summary": "Fever & diarrhea in child",
+                "urgency": "soon",
+                "confidence": 0.92,
+                "advice": "Consult a primary healthcare doctor within 24 hours. Administer ORS solution. " + DISCLAIMER,
+                "spoken": "बच्चे को 24 घंटे के भीतर नजदीकी स्वास्थ्य केंद्र ले जाएं और ORS घोल पिलाएं। यह केवल प्रारंभिक सलाह है।",
+                "symptoms": ["बुखार", "दस्त"],
+                "red_flags": [],
+                "flagged": False,
+                "source": "web",
+                "asr_provider": "groq_whisper",
+                "llm_provider": "groq_llama3.3",
+                "latency_ms": 380,
+                "is_seed_data": True,
+                "created_at": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+            },
+            {
+                "caller": "+91 97*** *8910",
+                "language": "en",
+                "transcript": "Mild sore throat and runny nose since yesterday morning",
+                "summary": "Mild upper respiratory cold",
+                "urgency": "home",
+                "confidence": 0.96,
+                "advice": "Rest well at home, stay hydrated, and monitor symptoms. " + DISCLAIMER,
+                "spoken": "Rest at home and drink warm fluids. Contact a doctor if symptoms worsen. This is triage guidance only.",
+                "symptoms": ["throat", "cold"],
+                "red_flags": [],
+                "flagged": False,
+                "source": "ivr",
+                "asr_provider": "groq_whisper",
+                "llm_provider": "groq_llama3.3",
+                "latency_ms": 310,
+                "is_seed_data": True,
+                "created_at": (datetime.now(timezone.utc) - timedelta(hours=9)).isoformat()
+            }
+        ]
+        for s in seeds:
+            d = TriageRequestDoc(**s)
+            d_dict = d.to_mongo()
+            if db is not None:
+                try:
+                    res = await db.triage_requests.insert_one(d_dict)
+                    d.id = str(res.inserted_id)
+                except Exception:
+                    d.id = str(ObjectId())
+                    d_dict["_id"] = ObjectId(d.id)
+                    IN_MEMORY_TRIAGE_REQUESTS.append(d_dict)
+            else:
+                d.id = str(ObjectId())
+                d_dict["_id"] = ObjectId(d.id)
+                IN_MEMORY_TRIAGE_REQUESTS.append(d_dict)
+
+
+@app.on_event("startup")
+async def startup_event():
+    await seed_demo_data()
 
 
 app.include_router(api_router)
