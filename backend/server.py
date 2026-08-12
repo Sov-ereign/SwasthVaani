@@ -4,21 +4,22 @@ import io
 import json
 import logging
 from urllib.parse import urlparse, urlunparse
-
 import base64
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Annotated, Any, Dict
 
+# dotenv imported first so we can load .env before any other imports read os.environ
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / '.env')
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
 from bson import ObjectId
@@ -83,6 +84,7 @@ except ImportError:
     HAS_EMERGENT = False
 
 ROOT_DIR = Path(__file__).parent
+# .env already loaded at module top — this is a no-op (override=False by default)
 load_dotenv(ROOT_DIR / '.env')
 
 client = None
@@ -107,7 +109,7 @@ def get_db():
     if client is None:
         try:
             mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-            client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=2000)
+            client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=8000)
             client_loop = curr_loop
         except Exception as e:
             logger.warning(f"Mongo client setup failed: {e}")
@@ -282,7 +284,7 @@ async def require_auth(creds: Optional[HTTPAuthorizationCredentials] = Depends(s
 
 
 TRIAGE_SYSTEM = """You are SwasthVaani, an AI medical triage assistant for rural, low-literacy patients in India.
-A patient has described their symptoms by voice. Your job is to assess urgency and give simple, calm, safe guidance.
+A patient has described their symptoms by voice. Your job is to assess urgency and give simple, calm, practical guidance.
 
 You MUST respond with ONLY a valid JSON object (no markdown, no extra text) with these exact keys:
 {
@@ -292,12 +294,13 @@ You MUST respond with ONLY a valid JSON object (no markdown, no extra text) with
   "spoken": the SAME advice written in the patient's language ({lang_name}), warm and simple, spoken aloud to the patient. Start by restating what you understood, state the urgency level in their language, then give 2-3 simple next steps. Keep under 90 words.
 }
 
-Urgency rules:
-- "emergency": chest pain, difficulty breathing, severe bleeding, unconsciousness, stroke signs, severe injury, high fever with confusion, pregnancy emergencies. Advise calling emergency/reaching a hospital NOW.
-- "soon": persistent moderate symptoms, fever over a few days, infections, worsening pain, that need a doctor within 1-2 days.
-- "home": mild self-limiting issues (mild cold, minor headache) manageable with rest/fluids/home care, with a note on when to seek help.
+Urgency rules — apply these strictly and practically:
+- "emergency": ONLY for life-threatening situations: chest pain, difficulty breathing, severe uncontrolled bleeding, unconsciousness, stroke signs (sudden facial drooping/arm weakness/slurred speech), severe burns, poisoning, seizures, high fever WITH confusion or stiff neck, obstetric emergencies. Tell patient to go to hospital NOW.
+- "soon": Symptoms that need a doctor within 1–2 days but are NOT immediately life-threatening. Examples: fever lasting more than 2–3 days, moderate ear/throat infection, persistent vomiting preventing fluids, significant worsening pain over days, urinary symptoms, a wound that may need stitches.
+- "home": Mild, common, self-limiting symptoms. Examples: a simple headache, mild cold or runny nose, minor sore throat, slight cough without breathing difficulty, tiredness, mild stomach upset, a small cut or bruise. Advise rest, fluids, and a simple home remedy. Mention when to upgrade to "soon".
 
-Always be safe: if unsure, escalate. Never give specific drug prescriptions. Encourage seeing a health worker."""
+Bias toward "home" for isolated mild symptoms with no red flags. Bias toward "soon" only if symptoms are persistent (>2 days), worsening, or moderately severe. Reserve "emergency" for genuinely life-threatening signs.
+Never give specific drug prescriptions. Encourage seeing a health worker if things don't improve."""
 
 
 async def run_triage(
@@ -469,8 +472,11 @@ async def run_triage(
 
     # 4. Rule-based safety engine fallback (supporting English, Hindi, Bengali, Tamil)
     if not data:
-        lower_t = transcript.lower()
-        if any(k in lower_t for k in ["chest pain", "bleeding", "unconscious", "breath", "सीने में दर्द", "सांस", "खून", "বুকে ব্যথা", "শ্বাসকষ্ট", "রক্ত"]):
+        lower_t = f" {transcript.lower()} "
+        import re
+        def has_word(w): return bool(re.search(rf"\b{w}\b", lower_t))
+        
+        if any(k in lower_t for k in ["chest pain", "bleeding", "unconscious", "breath", "seizure", "convuls", "stroke", "overdose", "poison", "सीने में दर्द", "सांस", "खून", "बेहोश", "বুকে ব্যথা", "শ্বাসকষ্ট", "রক্ত"]):
             urgency = "emergency"
             summary = "Chest pain / severe symptoms reported"
             advice = "Please reach the nearest emergency hospital immediately or call for urgent medical assistance."
@@ -478,7 +484,9 @@ async def run_triage(
             spoken_bn = "বুকে ব্যথা বা মারাত্মক লক্ষণ রয়েছে। অবিলম্বে নিকটস্থ হাসপাতালে যান বা জরুরি সেবায় কল করুন।"
             spoken_en = "Severe symptoms detected. Please seek emergency medical care at the nearest hospital immediately."
             spoken_ta = "கடுமையான அறிகுறிகள். உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும்."
-        elif any(k in lower_t for k in ["fever", "pain", "infection", "vomit", "बुखार", "दर्द", "कफ", "জ্বর", "ব্যথা", "বমি"]):
+        elif any(k in lower_t for k in ["fever", "infection", "vomit", "diarrhea", "high temperature", "बुखार", "उल्टी", "दस्त", "জ্বর", "বমি"]) or \
+             (has_word("pain") and any(k in lower_t for k in ["severe", "persistent", "worsening", "তীব্র ব্যথা", "ব্যথা"])) or \
+             any(k in lower_t for k in ["severe pain", "body pain"]):
             urgency = "soon"
             summary = "Fever / persistent symptoms reported"
             advice = "Visit a primary healthcare center or doctor within 1-2 days."
