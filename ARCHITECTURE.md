@@ -6,68 +6,73 @@ SwasthVaani is a voice-first AI health triage assistant designed for low-literac
 
 ---
 
+## Entry Points (User Layer)
+
+- **Web Voice Interface**: Browser application capturing microphone audio via `MediaRecorder` API or Web Speech API.
+- **Twilio IVR Call-In**: Phone interface accepting incoming voice calls via Twilio webhooks, capturing speech/audio and returning TwiML spoken audio responses.
+- *(Hardware/ESP32 kiosk: Not building for this hackathon window — dropped from active scope)*
+
+---
+
 ## 5-Stage Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Patient Input (mic / IVR phone call)                                   │
+│  Patient Input                                                           │
+│  Path A: Web Mic (VoiceApp.jsx)                                         │
+│  Path B: Phone Call (Twilio IVR / TwiML Webhook)                        │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Stage 1 — ASR (Automatic Speech Recognition)                           │
-│  Primary : OpenAI Whisper (local, model=small)                          │
-│  Fallback : OpenAI Whisper API (via emergentintegrations)               │
-│  Input  : audio blob (webm/wav/mp4)                                     │
-│  Output : { transcript: str, language: str, confidence: float }         │
+│  Primary  : Groq Whisper API (whisper-large-v3 — ultra-low latency)     │
+│  Fallbacks: Local Whisper (model=small), Emergent OpenAI Whisper        │
+│  Config   : ASR_PROVIDER=groq|whisper_local|openai                      │
+│  Input    : audio blob (webm/wav/mp4)                                   │
+│  Output   : { transcript: str, language: str, confidence: float }       │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Stage 2 — Symptom Extraction (NLP)                                     │
 │  Primary : keyword-based extract_symptoms() in server.py                │
-│  Future  : replace with NLP model or LLM extraction prompt              │
-│  Input  : transcript (str)                                              │
-│  Output : { symptoms: [str], duration: str|null,                        │
-│             severity_keywords: [str], red_flags: [str] }                │
+│  Input   : transcript (str)                                             │
+│  Output  : { symptoms: [str], red_flags: [str] }                        │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Stage 2.5 — RED-FLAG SAFETY GATE (runs before LLM, always)            │
-│  ⚠️  HARD INVARIANT: if red_flags non-empty → urgency = "emergency"     │
-│       LLM is never called. This cannot be overridden by any model.      │
-│  Function: check_red_flags(transcript) → list                           │
+│  ⚠️  HARD INVARIANT: if check_red_flags(transcript) non-empty           │
+│       → urgency = "emergency" immediately.                             │
+│       LLM is NEVER called regardless of provider (Groq/Ollama/GPT).     │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Stage 3 — Triage Classification                                        │
-│  Primary : Ollama (Nemotron model, localhost)                           │
-│  Fallback : GPT-4o via emergentintegrations                             │
-│  Fallback2: Rule-based keyword classifier                               │
-│  Input  : output of Stage 2                                             │
-│  Output : { urgency: "emergency"|"soon"|"home",                         │
-│             confidence: float, reasoning: str }                         │
-│  Rule   : red_flags non-empty → urgency forced to "emergency",          │
-│           bypassing/overriding the ML/LLM result. Logged separately.   │
+│  Primary  : Groq API (Llama 3.3 70B Versatile — fast inference)         │
+│  Fallbacks: Ollama (localhost), GPT-4o via Emergent, Rule-based         │
+│  Input    : output of Stage 2                                            │
+│  Output   : { urgency: "emergency"|"soon"|"home",                        │
+│               confidence: float, summary: str, advice: str, spoken: str } │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Stage 4 — TTS (Text-to-Speech)                                         │
 │  Primary : Kokoro ONNX (local, offline-capable)                         │
-│  Fallback : OpenAI TTS API (via emergentintegrations)                   │
-│  Input  : { urgency, guidance_text, language }                          │
-│  Output : audio stream (base64-encoded WAV)                             │
+│  Fallback: Edge TTS (multi-lingual neural), OpenAI TTS API              │
+│  Output  : audio stream (base64-encoded WAV/MP3) or TwiML spoken audio  │
 └──────────────────────────┬──────────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Dashboard Log Entry                                                     │
-│  { timestamp, transcript, symptoms, urgency, flagged: bool,             │
-│    red_flags: [str], disclaimer }                                        │
-│  Stored in: MongoDB (primary) / in-memory list (offline fallback)       │
+│  { timestamp, caller, transcript, symptoms, urgency, source: "web"|"ivr"│
+│    flagged: bool, red_flags: [str], disclaimer }                        │
+│  Stored in: MongoDB (primary) / in-memory list (fallback)               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,12 +128,12 @@ SwasthVaani/
 
 | Component | Choice | Why | Fallback if broken |
 |---|---|---|---|
-| ASR | OpenAI Whisper (local) | Free, offline, strong multilingual | Whisper API via emergentintegrations |
-| LLM Triage | Ollama Nemotron (local) | Free, no latency, private | GPT-4o via emergentintegrations |
-| TTS | Kokoro ONNX (local) | Free, offline, fast | OpenAI TTS API |
+| ASR | Groq Whisper (`whisper-large-v3`) | Ultra-low latency, hosted API, multilingual | Local Whisper (`small`) / Emergent Whisper |
+| LLM Triage | Groq Llama 3.3 (`llama-3.3-70b-versatile`) | Fast inference, robust reasoning | Ollama Nemotron (local) / GPT-4o / Rule fallback |
+| TTS | Kokoro ONNX (local) / Edge TTS | Offline capability, neural natural voices | OpenAI TTS API |
 | Backend | Python + FastAPI | Fast to write, async, type-safe | — |
-| Frontend | React (CRA + CRACO + Tailwind) | Already scaffolded in boilerplate | — |
-| DB | MongoDB + Motor (async) | Already in boilerplate | In-memory list fallback (auto) |
-| Auth | JWT (pyjwt) | Stateless, no infra needed | — |
-| IVR (stretch) | Twilio TwiML endpoints | Standard, cheapest | Skip — pre-recorded demo clip |
-| Deploy | Vercel (frontend) + Render (backend) | Free tier, fast CI | Netlify / Railway |
+| Frontend | React (CRA + CRACO + Tailwind) | Modern UI with voice & clinic dashboard | — |
+| DB | MongoDB + Motor (async) | Persistent store for clinic case logs | In-memory list fallback (auto) |
+| Auth | JWT (pyjwt) | Stateless clinic dashboard authentication | — |
+| IVR Entry Point | Twilio TwiML Webhooks | Direct phone call access without app/smartphone | Web Voice UI |
+| Deploy | Vercel (frontend) + Render (backend) | Cloud hosting with public webhook support | — |

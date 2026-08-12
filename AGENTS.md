@@ -83,13 +83,24 @@ Scope: `asr`, `triage`, `tts`, `dashboard`, `auth`, `ivr`, `deps`, `security`
 
 ---
 
+## Current Scope Focus
+
+| Feature / Integration | Status | Purpose |
+|---|---|---|
+| Web Voice App | Active | Primary browser voice interface for patients |
+| Groq ASR & LLM Integration | **Active Focus** | Low-latency Whisper transcription (`whisper-large-v3`) & Llama 3.3 reasoning |
+| Twilio IVR Call-In Path | **Active Focus** | Phone call entry point with TwiML & webhook validation |
+| Clinic Dashboard | Active | Real-time monitoring UI for health workers |
+
+---
+
 ## Explicit NOT-TO-BUILD List
 
-These are **Future Scope** items from the project proposal — do not build them during the hackathon:
+These are **Out of Scope** or dropped items — do not build them during the hackathon:
 
 | Item | Status |
 |---|---|
-| Twilio IVR call-in path | **Stretch only** — endpoints exist, don't spend time debugging Twilio webhooks |
+| ESP32 / Hardware Kiosk (push-to-talk) | **Not building this hackathon** — dropped from active scope |
 | More than 3 languages (en/hi/ta) | Out of scope |
 | Wearable device integration | Out of scope |
 | Multi-user clinic accounts / RBAC | Out of scope — shared password is fine |

@@ -17,15 +17,19 @@
 
 ---
 
-## Required API Keys & Where to Get Them
+## Required API Keys & Environment Configuration
 
-| Key | Where to Get | Required? |
+| Key / Var | Where to Get / Values | Purpose |
 |---|---|---|
+| `GROQ_API_KEY` | console.groq.com | Low-latency Whisper ASR (`whisper-large-v3`) & Llama 3.3 reasoning |
+| `ASR_PROVIDER` | `groq` \| `whisper_local` \| `openai` | Selects primary ASR engine (default: `groq` if `GROQ_API_KEY` present) |
+| `TWILIO_ACCOUNT_SID` | twilio.com/console | Twilio account identifier for IVR phone integration |
+| `TWILIO_AUTH_TOKEN` | twilio.com/console | Twilio auth token used to validate `X-Twilio-Signature` |
+| `TWILIO_PHONE_NUMBER` | twilio.com/console | Purchased phone number pointing to webhook |
+| `PUBLIC_WEBHOOK_URL` | e.g. `https://xxxx.ngrok-free.app` | Publicly accessible URL for Twilio webhooks |
 | `EMERGENT_LLM_KEY` | emergentintegrations dashboard | Recommended (enables LLM + OpenAI TTS + Whisper API) |
 | `OPENAI_API_KEY` | platform.openai.com | Alternative to EMERGENT_LLM_KEY |
-| `ANTHROPIC_API_KEY` | console.anthropic.com | Optional (Claude as LLM backend) |
-| `MONGO_URL` | MongoDB Atlas → Connect → Drivers | Required for persistence |
-| `GROQ_API_KEY` | console.groq.com | Optional (fast LLM fallback) |
+| `MONGO_URL` | MongoDB Atlas / Local Mongo | Database connection string |
 
 Without any LLM key, the system falls back to the rule-based classifier. Audio without a TTS key returns silence; the UI shows text guidance.
 

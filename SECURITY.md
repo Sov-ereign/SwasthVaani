@@ -99,3 +99,30 @@ safe_transcript = transcript.replace("</", "< /").replace("<script", "< script")
 ```
 
 This is not a complete defense against adversarial prompt injection, but it prevents the most obvious attacks (HTML injection, length abuse). For a production system, use a dedicated input validation layer.
+
+---
+
+## 8. Twilio Webhook Security (`X-Twilio-Signature`)
+
+Incoming calls to `/api/ivr/*` endpoints must be validated against Twilio signature header to prevent spoofing or unauthorized POST requests to public webhooks.
+
+1. **Header Check**: `X-Twilio-Signature` header is validated against `TWILIO_AUTH_TOKEN` and the target request URL (`PUBLIC_WEBHOOK_URL` + path).
+2. **Signature Failure Handling**: Requests failing signature validation return `403 Forbidden` immediately.
+3. **Environment Requirement**: `TWILIO_AUTH_TOKEN` must be configured in environment variables.
+
+---
+
+## 9. Groq API Key & Provider Safety
+
+- `GROQ_API_KEY` must strictly be loaded from environment variables and never logged or exposed to the client.
+- **Red-Flag Override Integrity**: When Groq is selected for ASR (`whisper-large-v3`) or LLM Triage (`llama-3.3-70b-versatile`), the local pre-execution safety gate `check_red_flags()` MUST run before sending the prompt to Groq API.
+- **Failover**: If Groq API returns a rate-limit (HTTP 429) or error, the system automatically falls back to local Whisper / Ollama / Emergent / Rule-based engine without dropping safety invariants.
+
+---
+
+## 10. Caller PII Handling (IVR)
+
+For privacy and data minimization, raw caller phone numbers (the Twilio `From` parameter) are **masked** before they are logged in the dashboard database.
+- Example: `+1234567890` is stored and displayed as `+123****890`.
+- The masked caller ID provides enough context for the clinic to group repeat calls while protecting the patient's full contact number from casual exposure on the dashboard.
+- This is explicitly implemented in the `/api/ivr/result` route.
