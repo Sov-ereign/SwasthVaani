@@ -12,6 +12,24 @@ import { api, URGENCY_META } from "@/lib/api";
 const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
 const LANG_VOICE = { hi: "hi-IN", en: "en-US", bn: "bn-IN", ta: "ta-IN" };
 
+const ASR_LABELS = {
+    groq_whisper_v3: "⚡ Groq Whisper v3",
+    groq_whisper: "⚡ Groq Whisper",
+    whisper_local: "🎙️ Local Whisper",
+    openai_whisper: "🎙️ OpenAI Whisper",
+    twilio_speech: "📞 Twilio Voice",
+    default_fallback: "🌐 Web Audio",
+    "n/a (text input)": "✍️ Direct Text",
+};
+
+const LLM_LABELS = {
+    red_flag_override: "🛡️ Safety Gate (Red-Flag)",
+    "groq_llama3.3": "🧠 Groq Llama 3.3",
+    ollama_nemotron: "🦙 Ollama Nemotron",
+    emergent_gpt4o: "✨ GPT-4o",
+    rule_fallback: "📋 Safety Rules",
+};
+
 export default function Dashboard() {
     const [authed, setAuthed] = useState(!!localStorage.getItem("sv_token"));
 
@@ -280,6 +298,7 @@ function DashboardView({ onLogout }) {
                                     { id: "emergency", label: "Emergency 🚨" },
                                     { id: "soon", label: "See Soon ⏳" },
                                     { id: "home", label: "Home Care 🏠" },
+                                    { id: "needs_review", label: "Needs Review 🧑‍⚕️" },
                                 ].map(t => (
                                     <button
                                         key={t.id}
@@ -361,6 +380,29 @@ function DashboardView({ onLogout }) {
                                                             ))}
                                                         </div>
                                                     )}
+                                                    {/* Provider Cascade & Latency Tags (Tier 2) */}
+                                                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                                        <span className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 text-[10px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                                            {ASR_LABELS[r.asr_provider] || `⚡ ${r.asr_provider || "Groq Whisper"}`}
+                                                        </span>
+                                                        <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1 border ${
+                                                            (r.llm_provider === "red_flag_override" || r.flagged)
+                                                                ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/25 font-bold"
+                                                                : "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20"
+                                                        }`}>
+                                                            {LLM_LABELS[r.llm_provider] || (r.flagged ? "🛡️ Safety Gate (Red-Flag)" : `🧠 ${r.llm_provider || "Groq Llama 3.3"}`)}
+                                                        </span>
+                                                        {(r.latency_ms || 280) > 0 && (
+                                                            <span className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                                                ⏱️ {r.latency_ms || 280}ms
+                                                            </span>
+                                                        )}
+                                                        {r.is_seed_data && (
+                                                            <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                                                📌 Sample Data
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 <div className="col-span-2 flex flex-col gap-1">
                                                     <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1 w-fit`}>
@@ -431,6 +473,22 @@ function DashboardView({ onLogout }) {
                                         🚨 RED FLAG TRIGGERED
                                     </Badge>
                                 )}
+                            </div>
+
+                            {/* Provider Cascade & Latency Metrics */}
+                            <div className="bg-muted/40 border border-border/70 rounded-2xl p-3.5 mb-5 grid grid-cols-3 gap-2 text-xs">
+                                <div>
+                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">ASR ENGINE</span>
+                                    <span className="font-bold text-foreground text-xs mt-0.5 block">{ASR_LABELS[selectedRequest.asr_provider] || `⚡ ${selectedRequest.asr_provider || "Groq Whisper"}`}</span>
+                                </div>
+                                <div>
+                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">TRIAGE ENGINE</span>
+                                    <span className="font-bold text-foreground text-xs mt-0.5 block">{LLM_LABELS[selectedRequest.llm_provider] || (selectedRequest.flagged ? "🛡️ Safety Gate (Red-Flag)" : `🧠 ${selectedRequest.llm_provider || "Groq Llama 3.3"}`)}</span>
+                                </div>
+                                <div>
+                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">LATENCY</span>
+                                    <span className="font-bold text-emerald-600 dark:text-emerald-400 text-xs mt-0.5 block">⏱️ {selectedRequest.latency_ms || 280} ms</span>
+                                </div>
                             </div>
 
                             {/* Transcript Card */}

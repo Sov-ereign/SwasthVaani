@@ -256,7 +256,7 @@ export default function Landing() {
                         <div className="mt-8 bg-black/20 backdrop-blur-md rounded-2xl p-5 border border-white/20">
                             <p className="text-xs text-white/70 uppercase font-bold tracking-wider">Twilio Webhook URL Endpoint:</p>
                             <p className="font-mono font-bold text-amber-300 mt-1 text-sm sm:text-base break-all" data-testid="ivr-webhook-url">
-                                {process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"}/api/ivr/voice
+                                {process.env.REACT_APP_BACKEND_URL || "http://localhost:8001"}/api/ivr/voice
                             </p>
                         </div>
                     </div>

@@ -46,4 +46,13 @@ export const URGENCY_META = {
         dot: "bg-secondary",
         badge: "bg-secondary text-secondary-foreground",
     },
+    needs_review: {
+        label: "Needs Review",
+        sub: { hi: "समीक्षा आवश्यक", bn: "পর্যালোচনা প্রয়োজন", en: "Human review needed", ta: "ஆய்வு தேவை" },
+        bg: "bg-purple-600",
+        text: "text-white",
+        ring: "ring-purple-500/30",
+        dot: "bg-purple-500",
+        badge: "bg-purple-600 text-white font-bold",
+    },
 };
