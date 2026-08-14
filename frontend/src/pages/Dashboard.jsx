@@ -593,8 +593,6 @@ function ClinicDashboard({ user, onLogout }) {
             (r.summary && r.summary.toLowerCase().includes(areaSearch.toLowerCase()));
         return matchesUrgency && matchesSearch;
     });
-        return matchesUrgency && matchesSearch;
-    });
 
     return (
         <div className="min-h-screen grain-bg" data-testid="clinic-dashboard">
