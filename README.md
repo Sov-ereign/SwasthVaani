@@ -102,7 +102,7 @@ Open `http://localhost:3000` in your browser.
 
 | Artifact | Link / Resource |
 |---|---|
-| 🌐 **Live Deployed Application** | [swasthvaani.health](https://swasthvaani.health) *(Vercel + Render)* |
+| 🌐 **Live Deployed Application** | [swasthvanai.health](https://swasthvaani.health) *(Vercel + Render)* |
 | 📊 **50+ User Growth & Feedback Dataset** | [swasthvaani_50_testers_feedback.csv](./data/swasthvaani_50_testers_feedback.csv) |
 | 📽️ **Full Product Walkthrough / Demo Video** | [Watch Demo Video on Loom / YouTube](https://youtu.be/swasthvaani-demo) |
 | 📑 **Level 5 Pitch Deck / Presentation** | [View SwasthVaani Pitch Deck](https://swasthvaani.health/pitch_deck.html) |

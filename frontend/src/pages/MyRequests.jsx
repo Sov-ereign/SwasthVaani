@@ -265,7 +265,13 @@ export default function MyRequests() {
                                         </div>
 
                                         {/* Footer Info */}
-                                        <div className="flex items-center justify-between pt-3 border-t border-border/50 text-[11px] text-muted-foreground font-semibold">
+                                        <div className="pt-2 text-xs border-t border-border/40 flex flex-wrap items-center gap-3 text-muted-foreground">
+                                            <span><b>Patient:</b> <span className="font-bold text-foreground">{req.patient_name || "Anonymous"}</span></span>
+                                            {req.patient_contact && <span>· <b>Phone:</b> <span className="font-bold text-foreground">{req.patient_contact}</span></span>}
+                                            {req.patient_address && <span>· <b>Village/Address:</b> <span className="font-bold text-foreground">{req.patient_address}</span></span>}
+                                        </div>
+
+                                        <div className="flex items-center justify-between pt-2 text-[11px] text-muted-foreground font-semibold">
                                             <span>Requested: {new Date(req.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                                             <span>ID: #{String(req.id || req._id || "").slice(-6)}</span>
                                         </div>

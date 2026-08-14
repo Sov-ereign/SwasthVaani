@@ -745,11 +745,23 @@ function ClinicDashboard({ user, onLogout }) {
                                                                 <StatusIcon className="w-3 h-3" /> {statusMeta.label}
                                                             </span>
                                                         </div>
-                                                        <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                                                            <span>Phone: <b>{req.patient_contact || "Anonymous Web Session"}</b></span>
+                                                        <div className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-3">
+                                                            {(req.patient_contact || req.patient_phone) && (
+                                                                <a 
+                                                                    href={`tel:${req.patient_contact || req.patient_phone}`}
+                                                                    className="inline-flex items-center gap-1 text-primary hover:underline font-bold bg-primary/10 px-2 py-0.5 rounded-md"
+                                                                >
+                                                                    <PhoneCall className="w-3 h-3 text-primary" /> {req.patient_contact || req.patient_phone}
+                                                                </a>
+                                                            )}
+                                                            {req.patient_address && (
+                                                                <span className="flex items-center gap-1 font-semibold text-foreground">
+                                                                    <MapPin className="w-3 h-3 text-secondary" /> {req.patient_address}
+                                                                </span>
+                                                            )}
                                                             {req.patient_pincode && <span>· PIN: <b>{req.patient_pincode}</b></span>}
-                                                            <span>· Requested: {new Date(req.created_at).toLocaleString()}</span>
-                                                        </p>
+                                                            <span>· {new Date(req.created_at).toLocaleString()}</span>
+                                                        </div>
                                                     </div>
 
                                                     <div className="flex items-center gap-1.5 self-start">
@@ -1027,13 +1039,54 @@ function ClinicDashboard({ user, onLogout }) {
                                 <X className="w-5 h-5" />
                             </button>
 
-                            <h3 className="font-head font-bold text-xl">Area Triage Case Details</h3>
-                            <div className="text-xs space-y-2">
-                                <p><b>Caller:</b> {selectedAreaItem.caller}</p>
-                                <p><b>Language:</b> {selectedAreaItem.language?.toUpperCase()}</p>
-                                <p><b>Urgency:</b> <span className="uppercase font-bold">{selectedAreaItem.urgency}</span></p>
-                                <p><b>Transcript:</b> "{selectedAreaItem.transcript}"</p>
-                                <p><b>Advice:</b> {selectedAreaItem.advice}</p>
+                            <h3 className="font-head font-bold text-xl text-foreground">Area Triage Case Details</h3>
+                            <div className="text-xs space-y-3">
+                                <div className="bg-muted/40 p-3 rounded-2xl border border-border/50 space-y-1">
+                                    <p><b>Patient / Caller:</b> {selectedAreaItem.patient_name || selectedAreaItem.caller}</p>
+                                    {selectedAreaItem.patient_phone && (
+                                        <p className="flex items-center gap-1.5 pt-1">
+                                            <b>Contact Phone:</b>
+                                            <a href={`tel:${selectedAreaItem.patient_phone}`} className="text-primary font-bold hover:underline inline-flex items-center gap-1">
+                                                <PhoneCall className="w-3 h-3" /> {selectedAreaItem.patient_phone}
+                                            </a>
+                                        </p>
+                                    )}
+                                    {selectedAreaItem.patient_address && (
+                                        <p><b>Village / Address:</b> {selectedAreaItem.patient_address}</p>
+                                    )}
+                                    <p><b>Language & Source:</b> {selectedAreaItem.language?.toUpperCase()} · {selectedAreaItem.source?.toUpperCase()}</p>
+                                    <p><b>Urgency:</b> <span className="uppercase font-extrabold text-primary">{selectedAreaItem.urgency}</span></p>
+                                </div>
+
+                                {selectedAreaItem.thinking && (
+                                    <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl text-amber-900 dark:text-amber-200">
+                                        <p className="font-bold text-[11px] uppercase tracking-wider text-amber-700 dark:text-amber-400 mb-0.5">Clinical AI Reasoning:</p>
+                                        <p className="italic">"{selectedAreaItem.thinking}"</p>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <p className="font-bold text-muted-foreground uppercase text-[10px] tracking-wide mb-1">Patient Symptoms Transcript:</p>
+                                    <p className="text-foreground bg-card p-3 rounded-2xl border border-border/80 font-semibold italic">"{selectedAreaItem.transcript}"</p>
+                                </div>
+
+                                {selectedAreaItem.history && selectedAreaItem.history.length > 0 && (
+                                    <div>
+                                        <p className="font-bold text-muted-foreground uppercase text-[10px] tracking-wide mb-1">Interactive Multi-Turn Dialogue History:</p>
+                                        <div className="space-y-1.5 max-h-40 overflow-y-auto p-2 bg-muted/30 rounded-2xl border border-border/60">
+                                            {selectedAreaItem.history.map((turn, ti) => (
+                                                <div key={ti} className={`text-[11px] p-2 rounded-xl ${turn.role === "user" ? "bg-primary/10 text-primary font-semibold" : "bg-card text-foreground"}`}>
+                                                    <b>{turn.role === "user" ? "Patient" : "SwasthVaani AI"}:</b> {turn.content}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <p className="font-bold text-muted-foreground uppercase text-[10px] tracking-wide mb-1">AI Triage Guidance & Spoken Response:</p>
+                                    <p className="text-foreground bg-primary/5 border border-primary/20 p-3 rounded-2xl">{selectedAreaItem.spoken || selectedAreaItem.advice}</p>
+                                </div>
                             </div>
                         </motion.div>
                     </div>

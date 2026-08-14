@@ -201,7 +201,7 @@ async def test_triage_pipeline(transcript="I have chest pain", language="en"):
         print(f"\n  ℹ️  Non-red-flag case: urgency={doc.urgency}")
 
     assert doc.disclaimer, "Disclaimer must be non-empty in every response"
-    assert doc.urgency in ("emergency", "soon", "home", "needs_review"), f"Invalid urgency: {doc.urgency}"
+    assert doc.urgency in ("emergency", "soon", "home", "needs_review", "needs_followup"), f"Invalid urgency: {doc.urgency}"
     print(f"  ✅ Phase 2 contract fields all present and valid")
     return doc
 

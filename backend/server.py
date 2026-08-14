@@ -278,10 +278,17 @@ class TriageRequestDoc(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
     caller: str = "Anonymous"
+    patient_name: Optional[str] = "Anonymous Patient"
+    patient_phone: Optional[str] = ""
+    patient_address: Optional[str] = ""
     language: str = "hi"
     transcript: str = ""
     summary: str = ""
     urgency: str = "home"
+    status_mode: str = "completed"  # "follow_up" | "completed"
+    thinking: Optional[str] = ""
+    question: Optional[str] = ""
+    history: List[Dict[str, Any]] = Field(default_factory=list)
     confidence: float = 1.0
     advice: str = ""
     spoken: str = ""
@@ -351,6 +358,7 @@ class PatientRequestDoc(BaseModel):
     session_id: str = ""
     patient_name: str = "Anonymous Patient"
     patient_contact: str = ""
+    patient_address: str = ""
     patient_pincode: str = ""
     provider_id: str
     provider_name: str = ""
@@ -400,12 +408,17 @@ class TextTriageInput(BaseModel):
     language: str = "hi"
     caller: Optional[str] = "Web user"
     pincode: Optional[str] = None
+    patient_name: Optional[str] = None
+    patient_phone: Optional[str] = None
+    patient_address: Optional[str] = None
+    history: Optional[List[Dict[str, Any]]] = None
 
 
 class CreatePatientRequestInput(BaseModel):
     session_id: str
     patient_name: Optional[str] = "Anonymous Patient"
     patient_contact: Optional[str] = ""
+    patient_address: Optional[str] = ""
     patient_pincode: Optional[str] = ""
     provider_id: str
     symptom_summary: Optional[str] = ""
@@ -595,15 +608,34 @@ TRIAGE_SYSTEM = """You are SwasthVaani, an expert clinical AI medical triage ass
 A patient has described their symptoms in natural language or voice.
 Your task is to analyze the medical situation based on sound clinical judgment, duration, organ involvement, and severity, then provide structured guidance.
 
+IMPORTANT: CLINICAL ITERATIVE TRIAGE & FOLLOW-UP RULE
+- Single symptoms (like "fever", "headache", "stomach pain", or "cough") can be ambiguous and dangerous if evaluated without context. For instance, fever on day 1 could be a mild viral infection or an early sign of dengue, malaria, meningitis, or sepsis.
+- You MUST evaluate whether you have enough clinical context (duration, severity, temperature, stiff neck, rash, breathing difficulty, chest discomfort, blood, etc.) to safely categorize the patient.
+- IF THE SITUATION IS AMBIGUOUS OR INCOMPLETE:
+  - Set "status": "follow_up"
+  - Set "urgency": "needs_followup"
+  - In "thinking", explain your clinical rationale (e.g. "Patient reports fever on day 1. Need to rule out high fever, rash, stiff neck, or breathlessness before determining tier.")
+  - In "question", ask ONE concise, empathetic, targeted follow-up question in the patient's language ({lang_name}) to gather crucial missing context.
+  - In "spoken", repeat the EXACT warm follow-up question in the patient's language ({lang_name}).
+- IF YOU HAVE SUFFICIENT DETAILS OR CLEAR RED-FLAGS:
+  - Set "status": "completed"
+  - Set "urgency": one of "emergency" | "soon" | "home"
+  - In "thinking", state why you reached this final urgency tier.
+  - In "question", leave empty string "".
+  - Provide concise English "summary" and "advice", and warm, empathetic "spoken" guidance in {lang_name}.
+
 You MUST respond with ONLY a valid JSON object (no markdown, no extra text) with these exact keys:
 {
-  "urgency": one of "emergency" | "soon" | "home",
-  "summary": concise clinical summary of reported symptoms in English for the clinic record (max 12 words),
-  "advice": clear, actionable next-steps guidance in English for clinic records (2-3 concise sentences),
-  "spoken": the EXACT advice translated and adapted into the patient's language ({lang_name}), warm, empathetic, simple, spoken clearly to the patient. Start by acknowledging their symptoms, explain the urgency level calmly in their language, and give 2-3 clear care or action steps. Keep under 90 words.
+  "status": "follow_up" | "completed",
+  "urgency": "emergency" | "soon" | "home" | "needs_followup",
+  "thinking": "concise step-by-step clinical rationale in English (max 2 sentences)",
+  "question": "if status is 'follow_up', 1 focused follow-up question in {lang_name}. If completed, leave empty string ''",
+  "summary": "concise clinical summary of reported symptoms in English for clinic records (max 12 words)",
+  "advice": "if status is 'completed', clear actionable advice in English (2-3 concise sentences). If follow_up, brief clinical note",
+  "spoken": "the EXACT text spoken warmly to the patient in {lang_name}. If follow_up, this is the follow-up question. If completed, the final advice. Keep under 90 words."
 }
 
-Clinical Urgency Classification Rules:
+Clinical Urgency Classification Rules (when completing triage):
 1. "emergency" (Immediate emergency hospital care required NOW):
    - Life-threatening or acute severe emergencies:
    - Cardiac/Chest: Chest pain, pressure, tightness, sudden breathlessness, heart attack symptoms.
@@ -636,6 +668,10 @@ async def run_triage(
     language: str,
     caller: Optional[str],
     source: str,
+    history: Optional[List[Dict[str, Any]]] = None,
+    patient_name: Optional[str] = None,
+    patient_phone: Optional[str] = None,
+    patient_address: Optional[str] = None,
     asr_provider: str = "groq_whisper",
     start_time: Optional[float] = None
 ) -> TriageRequestDoc:
@@ -648,19 +684,19 @@ async def run_triage(
     data: Optional[Dict[str, Any]] = None
     used_llm_provider = "rule_fallback"
 
-    # Sanitize input before passing to LLM (basic prompt-injection hygiene)
     safe_transcript = transcript.replace("</", "< /").replace("<script", "< script")[:2000]
-
-    # Phase 2 — Stage 0: Extract symptoms (independently callable NLP stage)
     symptoms = extract_symptoms(safe_transcript)
 
     # -----------------------------------------------------------------------
     # SAFETY INVARIANT: Red-flag check runs FIRST, before any LLM call.
-    # If red flags are present, urgency is forced to 'emergency' and the
-    # LLM is never consulted. This cannot be overridden by any model output.
-    # See SECURITY.md for the full policy statement.
+    # Checks current transcript as well as combined history.
     # -----------------------------------------------------------------------
-    red_flags = check_red_flags(safe_transcript)
+    combined_input = safe_transcript
+    if history:
+        user_messages = [h.get("content", "") or h.get("text", "") for h in history if h.get("role") in ["user", "patient"]]
+        combined_input = " ".join(user_messages + [safe_transcript])
+
+    red_flags = check_red_flags(combined_input)
     if red_flags:
         logger.warning(f"RED FLAG OVERRIDE triggered for caller={caller}: {red_flags}")
         spoken_map = {
@@ -670,7 +706,10 @@ async def run_triage(
             "bn": "আপনার লক্ষণগুলি খুবই গুরুতর। অবিলম্বে নিকটস্থ হাসপাতালে যান বা জরুরি পরিষেবাতে কল করুন। এটি প্রাথমিক নির্দেশিকা মাত্র।",
         }
         data = {
+            "status": "completed",
             "urgency": "emergency",
+            "thinking": "Red flag keywords detected in user input. Emergency override triggered.",
+            "question": "",
             "confidence": 1.0,
             "summary": f"RED FLAG: {', '.join(red_flags[:3])}",
             "advice": "Seek emergency medical care immediately. Call emergency services or go to the nearest hospital now. " + DISCLAIMER,
@@ -680,10 +719,17 @@ async def run_triage(
         latency_ms = max(50, int((time.time() - start_time) * 1000))
         doc = TriageRequestDoc(
             caller=caller or "Anonymous",
+            patient_name=patient_name or "Anonymous Patient",
+            patient_phone=patient_phone or "",
+            patient_address=patient_address or "",
             language=language,
             transcript=transcript,
             summary=data["summary"],
             urgency="emergency",
+            status_mode="completed",
+            thinking=data["thinking"],
+            question="",
+            history=history or [],
             confidence=1.0,
             advice=data["advice"],
             spoken=data["spoken"],
@@ -710,11 +756,21 @@ async def run_triage(
             doc_dict["_id"] = ObjectId(doc.id)
             IN_MEMORY_TRIAGE_REQUESTS.insert(0, doc_dict)
         return doc
-    # -----------------------------------------------------------------------
-    # LLM Triage Cascade (Groq -> Ollama -> Emergent -> Rule-based Fallback)
-    # Respects LLM_PROVIDER env config (options: groq | ollama | emergent | auto)
-    # -----------------------------------------------------------------------
-    data = None
+
+    # Construct conversation history messages for LLM
+    llm_messages = [{"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])}]
+    if history:
+        for h in history:
+            role = h.get("role") or h.get("sender") or "user"
+            content = h.get("content") or h.get("text") or ""
+            if role in ["user", "patient"] and content:
+                llm_messages.append({"role": "user", "content": content})
+            elif role in ["assistant", "ai"] and content:
+                llm_messages.append({"role": "assistant", "content": content})
+
+    if not history or (history[-1].get("content") != safe_transcript and history[-1].get("text") != safe_transcript):
+        llm_messages.append({"role": "user", "content": f"Patient symptoms (in {lang['name']}): {safe_transcript}"})
+
     llm_prov = os.environ.get("LLM_PROVIDER", "auto").lower()
     g_key = GROQ_API_KEY or os.environ.get("GROQ_API_KEY")
 
@@ -723,13 +779,10 @@ async def run_triage(
             client_groq = AsyncGroq(api_key=g_key, timeout=12.0)
             completion = await client_groq.chat.completions.create(
                 model=os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
-                messages=[
-                    {"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])},
-                    {"role": "user", "content": f"Patient symptoms (in {lang['name']}): {safe_transcript}"}
-                ],
+                messages=llm_messages,
                 temperature=0.1,
                 response_format={"type": "json_object"},
-                max_tokens=400,
+                max_tokens=500,
             )
             raw = completion.choices[0].message.content.strip()
             logger.info("Successfully triaged via Groq Llama 3.3")
@@ -740,7 +793,6 @@ async def run_triage(
         if HAS_OLLAMA:
             ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
             ollama_model = os.environ.get("OLLAMA_MODEL", "nemotron")
-            # Quick socket check to fail fast if Ollama server is offline
             import socket
             parsed = urlparse(ollama_host)
             host, port = parsed.hostname or "localhost", parsed.port or 11434
@@ -784,17 +836,18 @@ async def run_triage(
         providers = [("ollama_nemotron", _try_ollama), ("groq_llama3.3", _try_groq), ("emergent_gpt4o", _try_emergent)]
     elif llm_prov == "emergent":
         providers = [("emergent_gpt4o", _try_emergent), ("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama)]
-    else:  # 'groq' or 'auto'
+    else:
         providers = [("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama), ("emergent_gpt4o", _try_emergent)]
 
     for prov_name, prov_fn in providers:
         try:
             res = await prov_fn()
-            if res and isinstance(res, dict) and "urgency" in res:
+            if res and isinstance(res, dict) and ("urgency" in res or "status" in res):
                 data = res
                 used_llm_provider = prov_name
                 break
         except Exception as e:
+            logger.warning(f"LLM provider '{prov_name}' failed: {e}")
             logger.warning(f"LLM provider '{prov_name}' failed: {e}")
 
     # 4. Clinically-grounded safety engine fallback (supporting English, Hindi, Bengali, Tamil)
@@ -919,12 +972,26 @@ async def run_triage(
             data["advice"] = data.get("advice", "") + "\n" + DISCLAIMER
 
     latency_ms = max(50, int((time.time() - start_time) * 1000))
+    status_mode = data.get("status", "completed")
+    thinking = data.get("thinking", "")
+    question = data.get("question", "")
+
+    if status_mode == "follow_up" and question:
+        data["spoken"] = question
+
     doc = TriageRequestDoc(
         caller=caller or "Anonymous",
+        patient_name=patient_name or "Anonymous Patient",
+        patient_phone=patient_phone or "",
+        patient_address=patient_address or "",
         language=language,
         transcript=transcript,
         summary=data.get("summary", ""),
-        urgency=data.get("urgency", "soon"),
+        urgency=data.get("urgency", "soon" if status_mode == "completed" else "needs_followup"),
+        status_mode=status_mode,
+        thinking=thinking,
+        question=question,
+        history=history or [],
         confidence=float(data.get("confidence", 0.85)),
         advice=data.get("advice", ""),
         spoken=data.get("spoken", ""),
@@ -1342,7 +1409,11 @@ async def triage_voice(
     language: str = Form("hi"),
     caller: str = Form("Web user"),
     pincode: Optional[str] = Form(None),
-    transcript_hint: Optional[str] = Form(None)
+    transcript_hint: Optional[str] = Form(None),
+    patient_name: Optional[str] = Form(None),
+    patient_phone: Optional[str] = Form(None),
+    patient_address: Optional[str] = Form(None),
+    history_json: Optional[str] = Form(None)
 ):
     start_t = time.time()
     await rate_limit_ip(request)
@@ -1369,7 +1440,21 @@ async def triage_voice(
         transcript = default_transcripts.get(language, "I have a headache and feel unwell")
         asr_prov = "default_fallback"
 
-    doc = await run_triage(transcript, language, caller, "web", asr_provider=asr_prov, start_time=start_t)
+    parsed_history = []
+    if history_json:
+        try:
+            parsed_history = json.loads(history_json)
+        except Exception:
+            pass
+
+    doc = await run_triage(
+        transcript, language, caller, "web",
+        history=parsed_history,
+        patient_name=patient_name,
+        patient_phone=patient_phone,
+        patient_address=patient_address,
+        asr_provider=asr_prov, start_time=start_t
+    )
     
     # Phase 2 additive recommendation layer
     suggested_spec = recommend_specialty(doc.symptoms, doc.transcript, doc.urgency)
@@ -1395,7 +1480,14 @@ async def triage_text(request: Request, body: TextTriageInput):
     await rate_limit_ip(request)
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Empty text")
-    doc = await run_triage(body.text, body.language, body.caller, "web", asr_provider="n/a (text input)", start_time=start_t)
+    doc = await run_triage(
+        body.text, body.language, body.caller, "web",
+        history=body.history,
+        patient_name=body.patient_name,
+        patient_phone=body.patient_phone,
+        patient_address=body.patient_address,
+        asr_provider="n/a (text input)", start_time=start_t
+    )
     
     # Phase 2 additive recommendation layer
     suggested_spec = recommend_specialty(doc.symptoms, doc.transcript, doc.urgency)

@@ -94,10 +94,18 @@ export default function VoiceApp() {
     const [result, setResult] = useState(null);
     const [mode, setMode] = useState("patient"); // patient | asha
     
-    // ASHA Worker form details
+    // Patient Contact Details (for ASHA workers, NGOs, and Clinic records)
+    const [patientName, setPatientName] = useState("");
+    const [patientPhone, setPatientPhone] = useState("");
+    const [patientAddress, setPatientAddress] = useState("");
+
+    // ASHA Worker specific details
     const [ashaPatientName, setAshaPatientName] = useState("");
     const [ashaPatientAge, setAshaPatientAge] = useState("");
     const [ashaVillage, setAshaVillage] = useState("");
+
+    // Multi-turn conversation history state
+    const [history, setHistory] = useState([]);
 
     const [showType, setShowType] = useState(false);
     const [typed, setTyped] = useState("");
@@ -212,20 +220,30 @@ export default function VoiceApp() {
     };
 
     const getCallerLabel = () => {
-        if (mode === "asha") {
-            const name = ashaPatientName.trim() || "Patient";
-            const age = ashaPatientAge.trim() ? `, ${ashaPatientAge}y` : "";
-            const village = ashaVillage.trim() ? ` (${ashaVillage})` : "";
-            return `ASHA: ${name}${age}${village}`;
-        }
-        return "Web patient";
+        const pName = (mode === "asha" ? ashaPatientName : patientName).trim() || "Patient";
+        const pAge = mode === "asha" && ashaPatientAge.trim() ? `, ${ashaPatientAge}y` : "";
+        const pLoc = (mode === "asha" ? ashaVillage : patientAddress).trim();
+        const pPhone = patientPhone.trim() ? ` [${patientPhone.trim()}]` : "";
+        return mode === "asha"
+            ? `ASHA: ${pName}${pAge}${pLoc ? ` (${pLoc})` : ""}${pPhone}`
+            : `${pName}${pLoc ? ` (${pLoc})` : ""}${pPhone}`;
     };
 
     const submitAudio = async (blob, recognizedText) => {
+        const activeName = (mode === "asha" ? ashaPatientName : patientName).trim() || "Anonymous Patient";
+        const activePhone = patientPhone.trim();
+        const activeAddress = (mode === "asha" ? ashaVillage : patientAddress).trim();
+
         const fd = new FormData();
         fd.append("audio", blob, "symptoms.webm");
         fd.append("language", lang);
         fd.append("caller", getCallerLabel());
+        fd.append("patient_name", activeName);
+        fd.append("patient_phone", activePhone);
+        fd.append("patient_address", activeAddress);
+        if (history && history.length > 0) {
+            fd.append("history_json", JSON.stringify(history));
+        }
         if (recognizedText && recognizedText.trim()) {
             fd.append("transcript_hint", recognizedText.trim());
         }
@@ -233,13 +251,18 @@ export default function VoiceApp() {
         try {
             const { data } = await api.post("/triage/voice", fd, { headers: { "Content-Type": "multipart/form-data" } });
             
-            if (recognizedText && recognizedText.trim()) {
-                data.transcript = recognizedText.trim();
-            }
-            
+            const userTurnText = (recognizedText && recognizedText.trim()) ? recognizedText.trim() : (data.transcript || "Voice input");
+            data.transcript = userTurnText;
+
+            const updatedHistory = [
+                ...history,
+                { role: "user", content: userTurnText },
+                { role: "assistant", content: data.spoken || data.question || data.advice }
+            ];
+            setHistory(updatedHistory);
             setResult(data);
             setStatus("result");
-            playAudio(data.audio_base64, data.spoken || data.advice);
+            playAudio(data.audio_base64, data.spoken || data.question || data.advice);
         } catch (e) {
             if (recognizedText && recognizedText.trim()) {
                 return submitTextDirect(recognizedText);
@@ -252,11 +275,32 @@ export default function VoiceApp() {
     const submitTextDirect = async (textToSubmit) => {
         setStatus("processing");
         setShowType(false);
+        const activeName = (mode === "asha" ? ashaPatientName : patientName).trim() || "Anonymous Patient";
+        const activePhone = patientPhone.trim();
+        const activeAddress = (mode === "asha" ? ashaVillage : patientAddress).trim();
+
         try {
-            const { data } = await api.post("/triage/text", { text: textToSubmit, language: lang, caller: getCallerLabel() });
+            const payload = {
+                text: textToSubmit,
+                language: lang,
+                caller: getCallerLabel(),
+                patient_name: activeName,
+                patient_phone: activePhone,
+                patient_address: activeAddress,
+                history: history && history.length > 0 ? history : undefined
+            };
+
+            const { data } = await api.post("/triage/text", payload);
+
+            const updatedHistory = [
+                ...history,
+                { role: "user", content: textToSubmit },
+                { role: "assistant", content: data.spoken || data.question || data.advice }
+            ];
+            setHistory(updatedHistory);
             setResult(data);
             setStatus("result");
-            playAudio(data.audio_base64, data.spoken || data.advice);
+            playAudio(data.audio_base64, data.spoken || data.question || data.advice);
         } catch (e) {
             toast.error(e?.response?.data?.detail || "Could not process. Try again.");
             setStatus("idle");
@@ -273,6 +317,7 @@ export default function VoiceApp() {
         setStatus("idle");
         setTyped("");
         setLiveTranscript("");
+        setHistory([]);
         if (audioRef.current) audioRef.current.pause();
         if (window.speechSynthesis) window.speechSynthesis.cancel();
     };
@@ -326,6 +371,55 @@ export default function VoiceApp() {
                 </div>
             </div>
 
+            {/* Patient Self-Use Contact Details Form */}
+            {mode === "patient" && status === "idle" && (
+                <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="max-w-md mx-auto w-full px-5 mt-4"
+                >
+                    <div className="bg-card border border-primary/20 rounded-3xl p-4 shadow-xs space-y-2.5">
+                        <div className="flex items-center justify-between border-b border-border/50 pb-2">
+                            <span className="text-[11px] font-extrabold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                                <UserCheck className="w-3.5 h-3.5" /> Patient Info (For ASHA & Clinic Records)
+                            </span>
+                            <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                Optional
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <Label className="text-[11px] font-semibold">Your Name</Label>
+                                <Input 
+                                    placeholder="Ramesh Kumar" 
+                                    value={patientName} 
+                                    onChange={(e) => setPatientName(e.target.value)} 
+                                    className="h-8.5 text-xs rounded-xl bg-background mt-0.5" 
+                                />
+                            </div>
+                            <div>
+                                <Label className="text-[11px] font-semibold">Phone Number</Label>
+                                <Input 
+                                    placeholder="9876543210" 
+                                    value={patientPhone} 
+                                    onChange={(e) => setPatientPhone(e.target.value)} 
+                                    className="h-8.5 text-xs rounded-xl bg-background mt-0.5" 
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <Label className="text-[11px] font-semibold">Village / Ward / Location</Label>
+                            <Input 
+                                placeholder="Rampur Village, Ward 4" 
+                                value={patientAddress} 
+                                onChange={(e) => setPatientAddress(e.target.value)} 
+                                className="h-8.5 text-xs rounded-xl bg-background mt-0.5" 
+                            />
+                        </div>
+                    </div>
+                </motion.div>
+            )}
+
             {/* ASHA Patient Details Form */}
             {mode === "asha" && status === "idle" && (
                 <motion.div 
@@ -362,14 +456,25 @@ export default function VoiceApp() {
                                 />
                             </div>
                         </div>
-                        <div>
-                            <Label className="text-[11px] font-semibold">Village / Ward / Location</Label>
-                            <Input 
-                                placeholder="Rampur Village, Ward 4" 
-                                value={ashaVillage} 
-                                onChange={(e) => setAshaVillage(e.target.value)} 
-                                className="h-9 text-xs rounded-xl bg-background mt-1" 
-                            />
+                        <div className="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <Label className="text-[11px] font-semibold">Phone Number</Label>
+                                <Input 
+                                    placeholder="9876543210" 
+                                    value={patientPhone} 
+                                    onChange={(e) => setPatientPhone(e.target.value)} 
+                                    className="h-9 text-xs rounded-xl bg-background mt-1" 
+                                />
+                            </div>
+                            <div>
+                                <Label className="text-[11px] font-semibold">Village / Location</Label>
+                                <Input 
+                                    placeholder="Rampur Ward 4" 
+                                    value={ashaVillage} 
+                                    onChange={(e) => setAshaVillage(e.target.value)} 
+                                    className="h-9 text-xs rounded-xl bg-background mt-1" 
+                                />
+                            </div>
                         </div>
                     </div>
                 </motion.div>
@@ -564,7 +669,8 @@ export default function VoiceApp() {
                             t={t} 
                             mode={mode} 
                             onReset={reset} 
-                            onReplay={() => playAudio(result.audio_base64, result.spoken || result.advice)} 
+                            onReplay={() => playAudio(result.audio_base64, result.spoken || result.question || result.advice)} 
+                            onSubmitFollowUp={(answerText) => submitTextDirect(answerText)}
                         />
                     )}
                 </AnimatePresence>
@@ -573,7 +679,20 @@ export default function VoiceApp() {
     );
 }
 
-function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
+function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp }) {
+    if (result.status_mode === "follow_up") {
+        return (
+            <FollowUpCard 
+                result={result}
+                lang={lang}
+                t={t}
+                onReset={onReset}
+                onReplay={onReplay}
+                onSubmitAnswer={onSubmitFollowUp}
+            />
+        );
+    }
+
     const [sharedSMS, setSharedSMS] = useState(false);
     const [sharedWA, setSharedWA] = useState(false);
     const [scheduledCallback, setScheduledCallback] = useState(false);
@@ -996,6 +1115,96 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
                 <Button onClick={onReset} data-testid="ask-again-btn" className="flex-1 rounded-2xl h-11 text-xs font-bold gradient-bg text-white shadow-md">
                     <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> {t.again}
                 </Button>
+            </div>
+        </motion.div>
+    );
+}
+
+function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswer }) {
+    const [answerText, setAnswerText] = useState("");
+
+    const handleAnswerSubmit = (e) => {
+        if (e) e.preventDefault();
+        if (!answerText.trim()) return;
+        onSubmitAnswer(answerText.trim());
+        setAnswerText("");
+    };
+
+    return (
+        <motion.div 
+            initial={{ opacity: 0, y: 15 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            exit={{ opacity: 0 }}
+            className="w-full max-w-lg space-y-4"
+            data-testid="followup-card"
+        >
+            {/* Thinking / Clinical Rationale Banner */}
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-5 shadow-sm space-y-2">
+                <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 animate-spin text-amber-600" /> Clinical AI Triage in Progress
+                    </span>
+                    <Badge variant="outline" className="text-[10px] font-bold bg-amber-500/15 border-amber-400 text-amber-800">
+                        Follow-up Needed
+                    </Badge>
+                </div>
+                {result.thinking && (
+                    <p className="text-xs text-amber-900/80 dark:text-amber-200/90 font-medium italic bg-white/40 dark:bg-black/20 p-2.5 rounded-2xl border border-amber-400/20">
+                        <b>Clinical Reasoning:</b> "{result.thinking}"
+                    </p>
+                )}
+            </div>
+
+            {/* Question Card */}
+            <div className="bg-card border border-primary/30 rounded-[2rem] p-6 sm:p-7 shadow-xl space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                        <p className="text-xs font-extrabold uppercase text-primary tracking-wide">
+                            Follow-up Question
+                        </p>
+                        <h3 className="font-head font-extrabold text-xl sm:text-2xl text-foreground leading-snug">
+                            "{result.question || result.spoken}"
+                        </h3>
+                    </div>
+                    <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        onClick={onReplay}
+                        className="rounded-full shrink-0 bg-primary/10 hover:bg-primary/20 text-primary w-11 h-11"
+                        title="Listen to question"
+                    >
+                        <Volume2 className="w-5 h-5" />
+                    </Button>
+                </div>
+
+                <div className="border-t border-border/60 pt-4 space-y-3">
+                    <Label className="text-xs font-bold text-foreground">Type your answer / clarification:</Label>
+                    <form onSubmit={handleAnswerSubmit} className="space-y-3">
+                        <Textarea 
+                            value={answerText}
+                            onChange={(e) => setAnswerText(e.target.value)}
+                            placeholder="e.g. It started 2 days ago, and I also have a rash..."
+                            rows={3}
+                            className="rounded-2xl text-sm bg-background border-border/80"
+                        />
+                        <div className="flex items-center justify-between gap-2">
+                            <Button 
+                                type="button" 
+                                variant="ghost" 
+                                onClick={onReset}
+                                className="rounded-full text-xs font-bold text-muted-foreground hover:text-foreground"
+                            >
+                                Start Over
+                            </Button>
+                            <Button 
+                                type="submit" 
+                                className="rounded-full px-6 font-bold gradient-bg text-white shadow-md text-xs h-10"
+                            >
+                                Submit Clarification <ChevronRight className="w-4 h-4 ml-1" />
+                            </Button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </motion.div>
     );
