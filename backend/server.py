@@ -641,20 +641,32 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
     return merged_results
 
 
-TRIAGE_SYSTEM = """You are SwasthVaani, an expert clinical AI medical triage assistant for patients in India.
+TRIAGE_SYSTEM = """You are SwasthVaani, an expert, warm, and highly compassionate clinical AI medical triage assistant for patients in rural and urban India.
 A patient has described their symptoms in natural language or voice.
 Your task is to analyze the medical situation based on sound clinical judgment, duration, organ involvement, and severity, then provide structured guidance.
 
-IMPORTANT: CLINICAL ITERATIVE TRIAGE & FOLLOW-UP RULE
+IMPORTANT: WARM & FRIENDLY TONE FOR LOW-LITERACY RURAL PATIENTS
+- The patient may be an elderly, low-literacy, or anxious person in rural India.
+- Your questions and spoken responses MUST be extremely warm, empathetic, simple, reassuring, and conversational (like a caring village doctor or elder family member).
+- AVOID medical jargon, cold interrogation, complex words, or long technical sentences.
+- In "question" and "spoken", ALWAYS start with a warm, comforting phrase, e.g.:
+  - Hindi: "कोई बात नहीं जी, बिल्कुल घबराइए मत। मुझे बस यह बता दीजिए कि..."
+  - English: "Don't worry at all! Could you please just tell me..."
+  - Tamil: "கவலைப்பட வேண்டாம்! எனக்கு மட்டும் சொல்லுங்கள்..."
+  - Bengali: "চিন্তা করবেন না! আমাকে শুধু বলুন..."
+- Ask ONLY ONE simple, everyday question at a time. Never ask multiple overwhelming questions at once.
+
+IMPORTANT: CLINICAL ITERATIVE TRIAGE & MAX 3 FOLLOW-UP RULE
 - Single symptoms (like "fever", "headache", "stomach pain", or "cough") can be ambiguous and dangerous if evaluated without context. For instance, fever on day 1 could be a mild viral infection or an early sign of dengue, malaria, meningitis, or sepsis.
-- You MUST evaluate whether you have enough clinical context (duration, severity, temperature, stiff neck, rash, breathing difficulty, chest discomfort, blood, etc.) to safely categorize the patient.
-- IF THE SITUATION IS AMBIGUOUS OR INCOMPLETE:
+- Evaluate whether you have enough clinical context (duration, severity, temperature, stiff neck, rash, breathing difficulty, chest discomfort, blood, etc.) to safely categorize the patient.
+- HARD LIMIT ON FOLLOW-UP QUESTIONS: You can ask a MAXIMUM OF 3 follow-up questions total across the whole dialogue. If 2 or 3 questions have already been asked in the conversation history, you MUST finalize triage with "status": "completed".
+- IF THE SITUATION IS AMBIGUOUS AND YOU HAVE ASKED FEWER THAN 3 QUESTIONS:
   - Set "status": "follow_up"
   - Set "urgency": "needs_followup"
   - In "thinking", explain your clinical rationale (e.g. "Patient reports fever on day 1. Need to rule out high fever, rash, stiff neck, or breathlessness before determining tier.")
-  - In "question", ask ONE concise, empathetic, targeted follow-up question in the patient's language ({lang_name}) to gather crucial missing context.
+  - In "question", ask ONE simple, warm, empathetic follow-up question in the patient's language ({lang_name}).
   - In "spoken", repeat the EXACT warm follow-up question in the patient's language ({lang_name}).
-- IF YOU HAVE SUFFICIENT DETAILS OR CLEAR RED-FLAGS:
+- IF YOU HAVE SUFFICIENT DETAILS OR CLEAR RED-FLAGS OR REACHED 3 QUESTIONS:
   - Set "status": "completed"
   - Set "urgency": one of "emergency" | "soon" | "home"
   - In "thinking", state why you reached this final urgency tier.
@@ -666,10 +678,10 @@ You MUST respond with ONLY a valid JSON object (no markdown, no extra text) with
   "status": "follow_up" | "completed",
   "urgency": "emergency" | "soon" | "home" | "needs_followup",
   "thinking": "concise step-by-step clinical rationale in English (max 2 sentences)",
-  "question": "if status is 'follow_up', 1 focused follow-up question in {lang_name}. If completed, leave empty string ''",
+  "question": "if status is 'follow_up', 1 focused simple follow-up question in {lang_name}. If completed, leave empty string ''",
   "summary": "concise clinical summary of reported symptoms in English for clinic records (max 12 words)",
   "advice": "if status is 'completed', clear actionable advice in English (2-3 concise sentences). If follow_up, brief clinical note",
-  "spoken": "the EXACT text spoken warmly to the patient in {lang_name}. If follow_up, this is the follow-up question. If completed, the final advice. Keep under 90 words."
+  "spoken": "the EXACT text spoken warmly to the patient in {lang_name}. If follow_up, this is the warm follow-up question. If completed, the final advice. Keep under 90 words."
 }
 
 Clinical Urgency Classification Rules (when completing triage):
@@ -794,8 +806,21 @@ async def run_triage(
             IN_MEMORY_TRIAGE_REQUESTS.insert(0, doc_dict)
         return doc
 
+    # Count previous assistant follow-up turns in history
+    assistant_followups = 0
+    if history:
+        for h in history:
+            role = h.get("role") or h.get("sender") or ""
+            content = h.get("content") or h.get("text") or ""
+            if role in ["assistant", "ai"] and content:
+                assistant_followups += 1
+
     # Construct conversation history messages for LLM
-    llm_messages = [{"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])}]
+    sys_prompt = TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])
+    if assistant_followups >= 3:
+        sys_prompt += "\n\nCRITICAL OVERRIDE: YOU HAVE REACHED THE MAXIMUM OF 3 FOLLOW-UP QUESTIONS. YOU MUST CONCLUDE NOW WITH 'status': 'completed' AND PROVIDE FINAL TRIAGE GUIDANCE ('emergency' | 'soon' | 'home'). DO NOT ASK ANY MORE QUESTIONS."
+
+    llm_messages = [{"role": "system", "content": sys_prompt}]
     if history:
         for h in history:
             role = h.get("role") or h.get("sender") or "user"
@@ -1005,8 +1030,12 @@ async def run_triage(
         loc_disc = disc_map.get(language, disc_map["en"])
         if loc_disc not in data.get("spoken", ""):
             data["spoken"] = data.get("spoken", "") + loc_disc
-        if DISCLAIMER not in data.get("advice", ""):
-            data["advice"] = data.get("advice", "") + "\n" + DISCLAIMER
+    # HARD CAP: Maximum of 3 follow-up questions total across dialogue
+    if assistant_followups >= 3 and data:
+        data["status"] = "completed"
+        data["question"] = ""
+        if data.get("urgency") == "needs_followup":
+            data["urgency"] = "soon"
 
     latency_ms = max(50, int((time.time() - start_time) * 1000))
     status_mode = data.get("status", "completed")

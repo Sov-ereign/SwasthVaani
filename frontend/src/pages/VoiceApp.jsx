@@ -95,15 +95,35 @@ export default function VoiceApp() {
     const [result, setResult] = useState(null);
     const [mode, setMode] = useState("patient"); // patient | asha
     
-    // Patient Contact Details (for ASHA workers, NGOs, and Clinic records)
-    const [patientName, setPatientName] = useState("");
-    const [patientPhone, setPatientPhone] = useState("");
-    const [patientAddress, setPatientAddress] = useState("");
+    // Patient Contact Details (Persisted locally in LocalStorage & Local DB)
+    const [patientName, setPatientName] = useState(() => localStorage.getItem("sv_patient_name") || "");
+    const [patientPhone, setPatientPhone] = useState(() => localStorage.getItem("sv_patient_phone") || "");
+    const [patientAddress, setPatientAddress] = useState(() => localStorage.getItem("sv_patient_address") || "");
 
     // ASHA Worker specific details
-    const [ashaPatientName, setAshaPatientName] = useState("");
-    const [ashaPatientAge, setAshaPatientAge] = useState("");
-    const [ashaVillage, setAshaVillage] = useState("");
+    const [ashaPatientName, setAshaPatientName] = useState(() => localStorage.getItem("sv_asha_name") || "");
+    const [ashaPatientAge, setAshaPatientAge] = useState(() => localStorage.getItem("sv_asha_age") || "");
+    const [ashaVillage, setAshaVillage] = useState(() => localStorage.getItem("sv_asha_village") || "");
+
+    useEffect(() => {
+        try { localStorage.setItem("sv_patient_name", patientName); } catch (e) {}
+    }, [patientName]);
+    useEffect(() => {
+        try { localStorage.setItem("sv_patient_phone", patientPhone); } catch (e) {}
+    }, [patientPhone]);
+    useEffect(() => {
+        try { localStorage.setItem("sv_patient_address", patientAddress); } catch (e) {}
+    }, [patientAddress]);
+
+    useEffect(() => {
+        try { localStorage.setItem("sv_asha_name", ashaPatientName); } catch (e) {}
+    }, [ashaPatientName]);
+    useEffect(() => {
+        try { localStorage.setItem("sv_asha_age", ashaPatientAge); } catch (e) {}
+    }, [ashaPatientAge]);
+    useEffect(() => {
+        try { localStorage.setItem("sv_asha_village", ashaVillage); } catch (e) {}
+    }, [ashaVillage]);
 
     // Multi-turn conversation history state
     const [history, setHistory] = useState([]);
@@ -669,6 +689,7 @@ export default function VoiceApp() {
                             lang={lang} 
                             t={t} 
                             mode={mode} 
+                            history={history}
                             onReset={reset} 
                             onReplay={() => playAudio(result.audio_base64, result.spoken || result.question || result.advice)} 
                             onSubmitFollowUpText={(answerText) => submitTextDirect(answerText)}
@@ -681,13 +702,14 @@ export default function VoiceApp() {
     );
 }
 
-function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUpText, onSubmitFollowUpAudioVM }) {
+function ResultCard({ result, lang, t, mode, history, onReset, onReplay, onSubmitFollowUpText, onSubmitFollowUpAudioVM }) {
     if (result.status_mode === "follow_up") {
         return (
             <FollowUpCard 
                 result={result}
                 lang={lang}
                 t={t}
+                history={history}
                 onReset={onReset}
                 onReplay={onReplay}
                 onSubmitAnswerText={onSubmitFollowUpText}
@@ -1198,12 +1220,15 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
     );
 }
 
-function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswerText, onSubmitAudioVM }) {
+function FollowUpCard({ result, lang, t, history, onReset, onReplay, onSubmitAnswerText, onSubmitAudioVM }) {
     const [isRecording, setIsRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [liveTranscript, setLiveTranscript] = useState("");
     const [answerText, setAnswerText] = useState("");
     const [showTextFallback, setShowTextFallback] = useState(false);
+
+    const currentQuestionNum = (history || []).filter((h) => h.role === "assistant").length + 1;
+    const progressBadgeText = `Question ${Math.min(currentQuestionNum, 3)} of 3 (Max 3)`;
 
     const mediaRef = useRef(null);
     const chunksRef = useRef([]);
@@ -1289,7 +1314,7 @@ function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswerText, 
                         <Sparkles className="w-3.5 h-3.5 animate-spin text-amber-600" /> Clinical AI Triage in Progress
                     </span>
                     <Badge variant="outline" className="text-[10px] font-bold bg-amber-500/15 border-amber-400 text-amber-800">
-                        Follow-up Needed
+                        {progressBadgeText}
                     </Badge>
                 </div>
                 {result.thinking && (
