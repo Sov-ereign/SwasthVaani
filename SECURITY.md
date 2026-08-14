@@ -53,6 +53,8 @@ All secrets live in environment variables only. **Never hard-code values. Never 
 | `JWT_SECRET` | JWT signing secret for dashboard auth | Generate: `openssl rand -hex 32` |
 | `CLINIC_EMAIL` | Dashboard login email | Set to your clinic email |
 | `CLINIC_PASSWORD` | Dashboard login password | Set a strong password |
+| `SUPERADMIN_EMAIL` | SuperAdmin login email | Set to admin email |
+| `SUPERADMIN_PASSWORD` | SuperAdmin login password | Set strong admin password |
 | `OLLAMA_HOST` | Ollama server URL | Default: `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama model name | Default: `nemotron` |
 | `WHISPER_MODEL` | Local Whisper model size | `small` (fastest), `medium` (more accurate) |
@@ -85,7 +87,7 @@ The clinic dashboard (`/dashboard` in the frontend, `/api/triage/requests` and `
 
 - Login: `POST /api/auth/login` with `{email, password}`
 - JWT tokens expire after 7 days
-- Hardcoded credentials (`CLINIC_EMAIL`, `CLINIC_PASSWORD`) are acceptable for the hackathon but must be replaced with a proper user store before any real deployment.
+- Role-based token payloads (`clinic`, `ngo`, `superadmin`) ensure protected administration routes cannot be accessed without proper credentials.
 - **The dashboard must never be unauthenticated — even for a demo.** An open dashboard exposing patient case data is a privacy violation.
 
 ---
@@ -126,3 +128,17 @@ For privacy and data minimization, raw caller phone numbers (the Twilio `From` p
 - Example: `+1234567890` is stored and displayed as `+123****890`.
 - The masked caller ID provides enough context for the clinic to group repeat calls while protecting the patient's full contact number from casual exposure on the dashboard.
 - This is explicitly implemented in the `/api/ivr/result` route.
+
+---
+
+## 11. Patient PIN Code, Direct Consultation Requests & Role-Based Access Control
+
+The provider recommendation and direct request workflow adheres to the core data minimization and consent principles:
+
+1. **Anonymous Patient Sessions**: Patients do not require persistent user accounts. Requests are associated with anonymous client-generated session tokens (`session_id`) or user-entered opt-in phone numbers.
+2. **PIN Code Geolocation Privacy**: Patient PIN codes are treated purely as location descriptors for local provider matching. No GPS coordinates or exact street addresses are demanded from anonymous patients.
+3. **Direct Request Isolation**:
+   - General triage records remain in passive area-level feeds.
+   - Patient contact details submitted during a direct consultation booking are strictly scoped to the selected Clinic or NGO (`provider_id`).
+   - Status transitions (`pending` → `accepted` / `declined` / `completed`) are accessible only by the authorized provider and the patient holding the corresponding session token.
+4. **SuperAdmin Separation of Concerns**: SuperAdmin credentials cannot be used to modify medical advice; administrative privileges are restricted to provider verification, lifecycle management, and aggregate non-PII metrics.
