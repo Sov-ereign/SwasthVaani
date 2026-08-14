@@ -34,17 +34,23 @@ RED_FLAG_KEYWORDS = [
     "severe burn", "poisoning", "overdose", "suicidal",
     # Hindi
     "सीने में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "बेहोश",
-    "खून बह", "दौरा",
+    "अत्यधिक खून", "दौरा",
     # Tamil
-    "மார்பு வலி", "மூச்சு", "இரத்தம்",
+    "மார்பு வலி", "மூச்சுத் திணறல்", "அதிக ரத்தப்போக்கு",
+    # Bengali
+    "বুকে ব্যথা", "শ্বাসকষ্ট", "প্রচুর রক্তপাত", "অজ্ঞান",
 ]
 
 SYMPTOM_KEYWORDS = [
-    "fever", "pain", "cough", "cold", "headache", "vomiting", "diarrhea",
+    "fever", "pain", "cough", "cold", "headache", "head pain", "vomiting", "diarrhea",
     "rash", "swelling", "fatigue", "dizziness", "nausea", "bleeding",
     "breathing", "chest", "throat", "ear", "eye", "stomach", "back",
-    "बुखार", "दर्द", "खांसी", "सिरदर्द", "उल्टी", "कफ", "सूजन",
-    "காய்ச்சல்", "வலி", "இருமல்",
+    # Hindi
+    "बुखार", "दर्द", "खांसी", "सिरदर्द", "सिर दर्द", "सिर भारी", "उल्टी", "कफ", "सूजन", "चक्कर",
+    # Tamil
+    "காய்ச்சல்", "வலி", "இருமல்", "தலைவலி",
+    # Bengali
+    "জ্বর", "ব্যথা", "কাশি", "মাথা ব্যথা", "বমি",
 ]
 
 
@@ -53,7 +59,18 @@ def check_red_flags(transcript: str) -> list:
     Returns list of matched red-flag phrases, or empty list if none found.
     If non-empty, urgency MUST be 'emergency'. Cannot be overridden by any model."""
     lower = transcript.lower()
-    return [kw for kw in RED_FLAG_KEYWORDS if kw.lower() in lower]
+    import re
+    matched = []
+    for kw in RED_FLAG_KEYWORDS:
+        kw_lower = kw.lower()
+        if kw_lower.isascii():
+            pattern = r'\b' + re.escape(kw_lower) + r'\b'
+            if re.search(pattern, lower):
+                matched.append(kw)
+        else:
+            if kw_lower in lower:
+                matched.append(kw)
+    return matched
 
 
 def extract_symptoms(transcript: str) -> list:
