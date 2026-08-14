@@ -1246,7 +1246,7 @@ function FollowUpCard({ result, lang, t, history, onReset, onReplay, onSubmitAns
     const [showTextFallback, setShowTextFallback] = useState(false);
 
     const currentQuestionNum = (history || []).filter((h) => h.role === "assistant").length + 1;
-    const progressBadgeText = `Question ${Math.min(currentQuestionNum, 3)} of 3 (Max 3)`;
+    const progressBadgeText = `Question ${Math.min(currentQuestionNum, 2)} of 2 (Max 2)`;
 
     const mediaRef = useRef(null);
     const chunksRef = useRef([]);

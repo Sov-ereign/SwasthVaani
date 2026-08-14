@@ -673,17 +673,17 @@ IMPORTANT: WARM & FRIENDLY TONE FOR LOW-LITERACY RURAL PATIENTS
   - Bengali: "চিন্তা করবেন না! আমাকে শুধু বলুন..."
 - Ask ONLY ONE simple, everyday question at a time. Never ask multiple overwhelming questions at once.
 
-IMPORTANT: CLINICAL ITERATIVE TRIAGE & MAX 3 FOLLOW-UP RULE
+IMPORTANT: CLINICAL ITERATIVE TRIAGE & MAX 2 FOLLOW-UP RULE
 - Single symptoms (like "fever", "headache", "stomach pain", or "cough") can be ambiguous and dangerous if evaluated without context. For instance, fever on day 1 could be a mild viral infection or an early sign of dengue, malaria, meningitis, or sepsis.
 - Evaluate whether you have enough clinical context (duration, severity, temperature, stiff neck, rash, breathing difficulty, chest discomfort, blood, etc.) to safely categorize the patient.
-- HARD LIMIT ON FOLLOW-UP QUESTIONS: You can ask a MAXIMUM OF 3 follow-up questions total across the whole dialogue. If 2 or 3 questions have already been asked in the conversation history, you MUST finalize triage with "status": "completed".
-- IF THE SITUATION IS AMBIGUOUS AND YOU HAVE ASKED FEWER THAN 3 QUESTIONS:
+- HARD LIMIT ON FOLLOW-UP QUESTIONS: You can ask a MAXIMUM OF 2 follow-up questions total across the whole dialogue. If 1 or 2 questions have already been asked in the conversation history, you MUST finalize triage with "status": "completed".
+- IF THE SITUATION IS AMBIGUOUS AND YOU HAVE ASKED FEWER THAN 2 QUESTIONS:
   - Set "status": "follow_up"
   - Set "urgency": "needs_followup"
   - In "thinking", explain your clinical rationale (e.g. "Patient reports fever on day 1. Need to rule out high fever, rash, stiff neck, or breathlessness before determining tier.")
   - In "question", ask ONE simple, warm, empathetic follow-up question in the patient's language ({lang_name}).
   - In "spoken", repeat the EXACT warm follow-up question in the patient's language ({lang_name}).
-- IF YOU HAVE SUFFICIENT DETAILS OR CLEAR RED-FLAGS OR REACHED 3 QUESTIONS:
+- IF YOU HAVE SUFFICIENT DETAILS OR CLEAR RED-FLAGS OR REACHED 2 QUESTIONS:
   - Set "status": "completed"
   - Set "urgency": one of "emergency" | "soon" | "home"
   - In "thinking", state why you reached this final urgency tier.
@@ -834,8 +834,8 @@ async def run_triage(
 
     # Construct conversation history messages for LLM
     sys_prompt = TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])
-    if assistant_followups >= 3:
-        sys_prompt += "\n\nCRITICAL OVERRIDE: YOU HAVE REACHED THE MAXIMUM OF 3 FOLLOW-UP QUESTIONS. YOU MUST CONCLUDE NOW WITH 'status': 'completed' AND PROVIDE FINAL TRIAGE GUIDANCE ('emergency' | 'soon' | 'home'). DO NOT ASK ANY MORE QUESTIONS."
+    if assistant_followups >= 2:
+        sys_prompt += "\n\nCRITICAL OVERRIDE: YOU HAVE REACHED THE MAXIMUM OF 2 FOLLOW-UP QUESTIONS. YOU MUST CONCLUDE NOW WITH 'status': 'completed' AND PROVIDE FINAL TRIAGE GUIDANCE ('emergency' | 'soon' | 'home'). DO NOT ASK ANY MORE QUESTIONS."
 
     llm_messages = [{"role": "system", "content": sys_prompt}]
     if history:
@@ -1047,8 +1047,8 @@ async def run_triage(
         loc_disc = disc_map.get(language, disc_map["en"])
         if loc_disc not in data.get("spoken", ""):
             data["spoken"] = data.get("spoken", "") + loc_disc
-    # HARD CAP: Maximum of 3 follow-up questions total across dialogue
-    if assistant_followups >= 3 and data:
+    # HARD CAP: Maximum of 2 follow-up questions total across dialogue
+    if assistant_followups >= 2 and data:
         data["status"] = "completed"
         data["question"] = ""
         if data.get("urgency") == "needs_followup":
