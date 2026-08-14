@@ -5,7 +5,8 @@ import {
     Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, 
     Clock, Home, Keyboard, PhoneCall, Share2, Check, UserCheck, QrCode, Calendar, 
     MessageSquare, Printer, Stethoscope, Building2, MapPin, Phone, CheckCircle2, 
-    ChevronRight, Send, ListOrdered, Sparkles, VolumeX, ShieldCheck, HeartPulse
+    ChevronRight, Send, ListOrdered, Sparkles, VolumeX, ShieldCheck, HeartPulse,
+    Navigation, ExternalLink, Info
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -942,13 +943,77 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
                     <div className="space-y-3 pt-1">
                         {providers.length === 0 ? (
                             <div className="p-4 rounded-2xl bg-muted/40 text-center text-xs text-muted-foreground">
-                                No registered clinics found for this PIN code yet. You can visit your local Government PHC or try a nearby PIN.
+                                No clinics found for this PIN code. You can visit your nearest Government PHC or search a nearby PIN.
                             </div>
                         ) : (
                             providers.map((prov, i) => {
+                                const isRegistered = prov.is_registered !== false;
                                 const isSelected = selectedProvider && (selectedProvider.id === prov.id || selectedProvider.email === prov.email);
                                 const isExactPin = pincode && prov.pincode && pincode.trim() === prov.pincode.trim();
 
+                                if (!isRegistered) {
+                                    // OpenStreetMap / Real-time unverified facility card
+                                    const mapsUrl = (prov.lat && prov.lon)
+                                        ? `https://www.google.com/maps/dir/?api=1&destination=${prov.lat},${prov.lon}`
+                                        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(prov.name + ' ' + (prov.address || ''))}`;
+
+                                    return (
+                                        <div
+                                            key={prov.id || `osm_${i}`}
+                                            className="rounded-2xl p-4 border border-amber-500/20 bg-amber-500/[0.02] dark:bg-amber-500/[0.03] transition-all hover:border-amber-500/40"
+                                        >
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div>
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <h4 className="font-bold text-sm text-foreground">{prov.name}</h4>
+                                                        <span className="text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                                                            <Info className="w-2.5 h-2.5" /> Nearby Facility — Unverified
+                                                        </span>
+                                                        {prov.distance_km !== undefined && (
+                                                            <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                                                                {prov.distance_km} km away
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                                                        {prov.facility_type === "hospital" ? "Community Hospital / Health Center" : prov.facility_type === "pharmacy" ? "Pharmacy & Medical Supplies" : "Local Clinic / PHC"}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {prov.address && (
+                                                <div className="mt-2.5 pt-2 border-t border-border/40 text-xs text-muted-foreground flex flex-col gap-1">
+                                                    <p className="flex items-center gap-1.5">
+                                                        <MapPin className="w-3 h-3 shrink-0 text-muted-foreground" />
+                                                        <span className="truncate">{prov.address}</span>
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            <div className="mt-3 flex items-center justify-between pt-2 border-t border-border/40 flex-wrap gap-2">
+                                                <span className="text-[10px] text-muted-foreground italic">
+                                                    Directory listing only (informational)
+                                                </span>
+                                                <div className="flex items-center gap-1.5">
+                                                    {prov.phone && (
+                                                        <a href={`tel:${prov.phone}`}>
+                                                            <Button size="sm" variant="outline" className="rounded-full h-7.5 px-3 text-[11px] font-semibold border-border/70 hover:bg-primary/5">
+                                                                <Phone className="w-3 h-3 mr-1 text-primary" /> Call
+                                                            </Button>
+                                                        </a>
+                                                    )}
+                                                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer">
+                                                        <Button size="sm" variant="outline" className="rounded-full h-7.5 px-3 text-[11px] font-bold border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20">
+                                                            <Navigation className="w-3 h-3 mr-1" /> Get Directions <ExternalLink className="w-2.5 h-2.5 ml-1 opacity-70" />
+                                                        </Button>
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+
+                                // Registered / Verified Provider Card
                                 return (
                                     <div
                                         key={prov.id || prov._id || i}
@@ -969,8 +1034,11 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
                                                     }`}>
                                                         {prov.facility_type === "free_clinic" ? "Free PHC" : prov.type === "ngo" ? "NGO Partner" : "Private Clinic"}
                                                     </span>
+                                                    <span className="text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
+                                                        <CheckCircle2 className="w-2.5 h-2.5" /> Registered Partner
+                                                    </span>
                                                     {isExactPin && (
-                                                        <span className="text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                                        <span className="text-[10px] font-bold bg-blue-500/15 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30">
                                                             Exact PIN
                                                         </span>
                                                     )}
@@ -1013,6 +1081,14 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
                                     </div>
                                 );
                             })
+                        )}
+
+                        {/* OpenStreetMap Attribution Footer */}
+                        {providers.length > 0 && (
+                            <div className="pt-2 text-[10px] text-muted-foreground/75 flex items-center justify-between border-t border-border/30">
+                                <span>Facility data: SwasthVaani Network & <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">© OpenStreetMap contributors</a></span>
+                                <span className="font-mono">ODbL</span>
+                            </div>
                         )}
                     </div>
 
