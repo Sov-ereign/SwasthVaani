@@ -75,7 +75,7 @@ pip install -r requirements.txt
 ollama pull nemotron
 
 # Start FastAPI server
-uvicorn server:app --reload --port 8000
+uvicorn server:app --reload --port 8001
 ```
 
 ---

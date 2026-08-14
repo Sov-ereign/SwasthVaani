@@ -553,7 +553,7 @@ function ClinicDashboard({ user, onLogout }) {
         }
     };
 
-    const playDoctorAudio = (text, languageCode) => {
+    const speakBrowserText = (text, languageCode) => {
         if (!("speechSynthesis" in window)) return toast.info(text);
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
@@ -561,6 +561,22 @@ function ClinicDashboard({ user, onLogout }) {
         utterance.rate = 0.95;
         window.speechSynthesis.speak(utterance);
         toast.info("Playing spoken advice audio...");
+    };
+
+    const playDoctorAudio = (item) => {
+        if (!item) return;
+        const text = typeof item === "string" ? item : (item.spoken || item.advice || item.transcript);
+        const languageCode = typeof item === "string" ? "hi" : (item.language || "hi");
+        if (typeof item === "object" && item.audio_base64) {
+            try {
+                const audio = new Audio(`data:audio/mp3;base64,${item.audio_base64}`);
+                audio.play().then(() => toast.info("Playing recorded audio guidance...")).catch(() => speakBrowserText(text, languageCode));
+                return;
+            } catch (e) {
+                // Fallback to SpeechSynthesis
+            }
+        }
+        speakBrowserText(text, languageCode);
     };
 
     const pendingDirectCount = directRequests.filter(r => r.status === "pending").length;
@@ -571,6 +587,8 @@ function ClinicDashboard({ user, onLogout }) {
             (r.caller && r.caller.toLowerCase().includes(areaSearch.toLowerCase())) ||
             (r.transcript && r.transcript.toLowerCase().includes(areaSearch.toLowerCase())) ||
             (r.summary && r.summary.toLowerCase().includes(areaSearch.toLowerCase()));
+        return matchesUrgency && matchesSearch;
+    });
         return matchesUrgency && matchesSearch;
     });
 
@@ -920,14 +938,8 @@ function ClinicDashboard({ user, onLogout }) {
                                                 </div>
 
                                                 <div className="col-span-1">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            playDoctorAudio(r.spoken || r.advice || r.transcript, r.language);
-                                                        }}
-                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center"
-                                                        title="Play voice output"
-                                                    >
+                                                    <button onClick={(e) => { e.stopPropagation(); playDoctorAudio(r); }}
+                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center" title="Listen to Patient Audio">
                                                         <Volume2 className="w-4 h-4" />
                                                     </button>
                                                 </div>

@@ -33,12 +33,12 @@ RED_FLAG_KEYWORDS = [
     "stroke", "heart attack", "seizure", "convulsion",
     "severe burn", "poisoning", "overdose", "suicidal",
     # Hindi
-    "सीने में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "बेहोश",
-    "अत्यधिक खून", "दौरा",
+    "सीने में दर्द", "छाती में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "सांस फूल", "बेहोश", "होश नहीं",
+    "अत्यधिक खून", "खून बह", "दौरा",
     # Tamil
-    "மார்பு வலி", "மூச்சுத் திணறல்", "அதிக ரத்தப்போக்கு",
+    "மார்பு வலி", "மூச்சு", "மூச்சுத் திணறல்", "இரத்தம்", "அதிக ரத்தப்போக்கு",
     # Bengali
-    "বুকে ব্যথা", "শ্বাসকষ্ট", "প্রচুর রক্তপাত", "অজ্ঞান",
+    "বুকে ব্যথা", "শ্বাসকষ্ট", "রক্ত", "প্রচুর রক্তপাত", "জ্ঞান হারিয়ে", "অজ্ঞান",
 ]
 
 SYMPTOM_KEYWORDS = [
@@ -110,6 +110,8 @@ def test_red_flags():
         # (transcript, should_trigger)
         ("I have chest pain and difficulty breathing", True),
         ("सीने में दर्द है और सांस लेने में तकलीफ है", True),
+        ("मेरी छाती में बहुत दर्द है और सांस फूल रही है", True),
+        ("আমার বুকে প্রচণ্ড ব্যথা এবং শ্বাসকষ্ট হচ্ছে", True),
         ("I have a mild headache and slight fever", False),
         ("मुझे बुखार है", False),
         ("Patient is unconscious and not breathing", True),
