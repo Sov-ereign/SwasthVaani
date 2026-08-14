@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard, PhoneCall, Share2, Check, UserCheck, QrCode, Calendar, MessageSquare, Printer } from "lucide-react";
+import { Mic, Square, Loader2, Volume2, RotateCcw, ArrowLeft, Activity, AlertTriangle, Clock, Home, Keyboard, PhoneCall, Share2, Check, UserCheck, QrCode, Calendar, MessageSquare, Printer, Stethoscope, Building2, MapPin, Phone, CheckCircle2, ChevronRight, Send, ListOrdered } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, LANGUAGES, URGENCY_META } from "@/lib/api";
+import { api, LANGUAGES, URGENCY_META, getPatientSessionId } from "@/lib/api";
 
 const UI = {
     hi: { tap: "बोलने के लिए दबाएँ", listening: "सुन रहे हैं… फिर से दबाकर रोकें", thinking: "समझ रहे हैं…", again: "फिर से बोलें", play: "आवाज़ सुनें", you: "आपने कहा", placeholder: "मुझे बुखार और सिर दर्द है…", typeBtn: "टाइप करें" },
@@ -237,13 +237,20 @@ export default function VoiceApp() {
         <div className="min-h-screen grain-bg flex flex-col" data-testid="voice-app">
             <header className="h-16 px-5 flex items-center justify-between max-w-2xl mx-auto w-full">
                 <Link to="/" data-testid="voice-back-link" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
-                    <ArrowLeft className="w-5 h-5" /> <span className="font-semibold">Back</span>
+                    <ArrowLeft className="w-5 h-5" /> <span className="font-semibold text-sm">Home</span>
                 </Link>
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                        <Activity className="w-4 h-4 text-primary-foreground" />
+                <div className="flex items-center gap-3">
+                    <Link to="/my-requests" data-testid="voice-my-requests-link">
+                        <Button variant="ghost" size="sm" className="rounded-full text-xs font-bold text-muted-foreground hover:text-primary gap-1 px-3">
+                            <ListOrdered className="w-3.5 h-3.5" /> My Requests
+                        </Button>
+                    </Link>
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                            <Activity className="w-4 h-4 text-primary-foreground" />
+                        </div>
+                        <span className="font-head font-extrabold tracking-tight">SwasthVaani</span>
                     </div>
-                    <span className="font-head font-extrabold tracking-tight">SwasthVaani</span>
                 </div>
             </header>
 
@@ -432,6 +439,16 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
     const [sharedSMS, setSharedSMS] = useState(false);
     const [sharedWA, setSharedWA] = useState(false);
     const [scheduledCallback, setScheduledCallback] = useState(false);
+    
+    // Phase 2 & 3 State: Specialty Providers & Direct Booking
+    const [pincode, setPincode] = useState(result.pincode || "");
+    const [providers, setProviders] = useState(result.recommended_providers || []);
+    const [loadingProviders, setLoadingProviders] = useState(false);
+    const [selectedProvider, setSelectedProvider] = useState(null);
+    const [patientName, setPatientName] = useState("");
+    const [patientContact, setPatientContact] = useState("");
+    const [bookingSubmitting, setBookingSubmitting] = useState(false);
+    const [bookedRequest, setBookedRequest] = useState(null);
 
     const meta = URGENCY_META[result.urgency] || URGENCY_META.soon;
     const Icon = ICONS[result.urgency] || Clock;
@@ -459,9 +476,58 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
         window.print();
     };
 
+    const handleSearchProvidersByPin = async (e) => {
+        if (e) e.preventDefault();
+        if (!result.suggested_specialty) return;
+        setLoadingProviders(true);
+        try {
+            const { data } = await api.get("/providers/recommend", {
+                params: {
+                    specialty: result.suggested_specialty,
+                    pincode: pincode.trim()
+                }
+            });
+            setProviders(data.providers || []);
+            toast.success(`Found ${data.providers?.length || 0} providers for PIN ${pincode || "general area"}`);
+        } catch (err) {
+            console.error("Error finding providers:", err);
+            toast.error("Could not refresh provider list");
+        } finally {
+            setLoadingProviders(false);
+        }
+    };
+
+    const handleBookProvider = async (e) => {
+        e.preventDefault();
+        if (!selectedProvider) return;
+        setBookingSubmitting(true);
+        try {
+            const sessionId = getPatientSessionId();
+            const payload = {
+                session_id: sessionId,
+                patient_name: patientName.trim() || "Anonymous Patient",
+                patient_contact: patientContact.trim() || (mode === "asha" ? result.caller : ""),
+                patient_pincode: pincode.trim(),
+                provider_id: selectedProvider.id || selectedProvider._id || selectedProvider.email,
+                symptom_summary: result.summary || result.transcript,
+                triage_urgency: result.urgency,
+                suggested_specialty: result.suggested_specialty || "General Physician",
+                transcript: result.transcript
+            };
+            const { data } = await api.post("/patient/requests", payload);
+            setBookedRequest(data);
+            toast.success(`Consultation request sent to ${selectedProvider.name}!`);
+        } catch (err) {
+            console.error("Error creating patient request:", err);
+            toast.error(err?.response?.data?.detail || "Could not submit request. Please try again.");
+        } finally {
+            setBookingSubmitting(false);
+        }
+    };
+
     return (
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }} className="w-full max-w-md" data-testid="triage-result-card">
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }} className="w-full max-w-lg" data-testid="triage-result-card">
             
             <div className={`${meta.bg} ${meta.text} rounded-3xl p-8 flex flex-col items-center gap-4 shadow-xl ring-8 ${meta.ring}`}>
                 <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center">
@@ -530,6 +596,7 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
                 </div>
             )}
 
+            {/* Clinical Guidance Text Card */}
             <div className="bg-card border border-border rounded-2xl p-6 mt-4 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{t.you}</p>
                 <p className="mt-1 text-foreground italic" data-testid="transcript-text">"{result.transcript}"</p>
@@ -556,6 +623,196 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay }) {
                     {result.disclaimer || "⚠️ This is triage guidance only — not a medical diagnosis. Always consult a qualified health professional for medical advice."}
                 </p>
             </div>
+
+            {/* ----------------------------------------------------------------------- */}
+            {/* Phase 2 & 3: Specialty Recommendation & Direct Provider Request Layer   */}
+            {/* Note: Rendered ONLY for DoctorVisit ('soon') / Emergency ('emergency')  */}
+            {/* HomeCare ('home') path remains light with general guidance only.        */}
+            {/* ----------------------------------------------------------------------- */}
+            {result.urgency !== "home" && result.suggested_specialty && (
+                <div className="mt-6 bg-card border-2 border-primary/20 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4" data-testid="specialty-recommendation-panel">
+                    <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-3.5">
+                        <div>
+                            <span className="text-[11px] font-extrabold uppercase tracking-wider text-primary bg-primary/10 px-2.5 py-1 rounded-full inline-flex items-center gap-1.5">
+                                <Stethoscope className="w-3 h-3" /> Recommended Specialty
+                            </span>
+                            <h3 className="font-head font-extrabold text-xl tracking-tight text-foreground mt-2 flex items-center gap-2">
+                                {result.suggested_specialty}
+                            </h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Based on your symptoms, we matched verified nearby clinics & NGO care centers.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* PIN Code Search Filter */}
+                    <form onSubmit={handleSearchProvidersByPin} className="flex gap-2 items-center bg-background/60 p-2 rounded-2xl border border-border/80">
+                        <div className="relative flex-1">
+                            <MapPin className="w-3.5 h-3.5 absolute left-3 top-3 text-muted-foreground" />
+                            <Input
+                                placeholder="Enter 6-digit PIN Code (e.g. 110001)"
+                                value={pincode}
+                                onChange={(e) => setPincode(e.target.value)}
+                                className="pl-8.5 h-9 text-xs rounded-xl bg-card border-border/60"
+                            />
+                        </div>
+                        <Button type="submit" size="sm" disabled={loadingProviders} className="h-9 px-4 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground">
+                            {loadingProviders ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Find Nearby"}
+                        </Button>
+                    </form>
+
+                    {/* Provider Cards List */}
+                    <div className="space-y-3 pt-1">
+                        {providers.length === 0 ? (
+                            <div className="p-4 rounded-2xl bg-muted/40 text-center text-xs text-muted-foreground">
+                                No specific clinics found for this PIN. Try entering a nearby PIN code or consult your local PHC.
+                            </div>
+                        ) : (
+                            providers.map((prov, i) => {
+                                const isSelected = selectedProvider && (selectedProvider.id === prov.id || selectedProvider.email === prov.email);
+                                const isExactPin = pincode && prov.pincode && pincode.trim() === prov.pincode.trim();
+
+                                return (
+                                    <div
+                                        key={prov.id || prov._id || i}
+                                        className={`rounded-2xl p-4 border transition-all ${
+                                            isSelected ? "bg-primary/5 border-primary shadow-xs ring-2 ring-primary/20" : "bg-card border-border/80 hover:border-border"
+                                        }`}
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <h4 className="font-bold text-sm text-foreground">{prov.name}</h4>
+                                                    <span className={`text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                                                        prov.type === "ngo" ? "bg-secondary/20 text-secondary border border-secondary/30" : "bg-primary/10 text-primary border border-primary/20"
+                                                    }`}>
+                                                        {prov.facility_type === "free_clinic" ? "Free Clinic" : prov.type === "ngo" ? "NGO Partner" : "Private Clinic"}
+                                                    </span>
+                                                    {isExactPin && (
+                                                        <span className="text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                                            Exact PIN Match
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {prov.qualification && (
+                                                    <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">{prov.qualification}</p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-2.5 pt-2 border-t border-border/40 text-xs text-muted-foreground flex flex-col gap-1">
+                                            {prov.address && (
+                                                <p className="flex items-center gap-1.5">
+                                                    <MapPin className="w-3 h-3 shrink-0 text-muted-foreground" />
+                                                    <span className="truncate">{prov.address} (PIN: {prov.pincode})</span>
+                                                </p>
+                                            )}
+                                            {prov.phone && (
+                                                <p className="flex items-center gap-1.5">
+                                                    <Phone className="w-3 h-3 shrink-0 text-muted-foreground" />
+                                                    <span>{prov.phone}</span>
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        {/* Action Button: Book / Request Care */}
+                                        <div className="mt-3 flex items-center justify-between pt-2 border-t border-border/40">
+                                            <span className="text-[11px] text-muted-foreground font-semibold">
+                                                Specialties: {prov.specialties?.slice(0, 2).join(", ")}
+                                            </span>
+                                            <Button
+                                                size="sm"
+                                                onClick={() => {
+                                                    setSelectedProvider(prov);
+                                                    setBookedRequest(null);
+                                                }}
+                                                variant={isSelected ? "default" : "outline"}
+                                                className={`rounded-full h-8 px-3.5 text-xs font-bold transition-all ${
+                                                    isSelected ? "bg-primary text-primary-foreground" : "border-primary/40 text-primary hover:bg-primary/10"
+                                                }`}
+                                            >
+                                                {isSelected ? "Selected" : "Request Care"} <ChevronRight className="w-3 h-3 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    {/* Booking Form Dialog Box when a provider is selected */}
+                    {selectedProvider && !bookedRequest && (
+                        <motion.form
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            onSubmit={handleBookProvider}
+                            className="mt-4 p-4 rounded-2xl bg-primary/5 border border-primary/30 space-y-3"
+                        >
+                            <div className="flex items-center justify-between">
+                                <p className="text-xs font-bold text-foreground">
+                                    Direct Request for <span className="text-primary">{selectedProvider.name}</span>
+                                </p>
+                                <button type="button" onClick={() => setSelectedProvider(null)} className="text-xs text-muted-foreground hover:text-foreground font-semibold">
+                                    Cancel
+                                </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                    <Label className="text-[11px]">Your Name (Optional)</Label>
+                                    <Input
+                                        placeholder="e.g. Ramesh Kumar"
+                                        value={patientName}
+                                        onChange={(e) => setPatientName(e.target.value)}
+                                        className="h-8.5 text-xs rounded-xl bg-card mt-0.5"
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[11px]">Contact Phone (Optional)</Label>
+                                    <Input
+                                        placeholder="e.g. +91 98111 22334"
+                                        value={patientContact}
+                                        onChange={(e) => setPatientContact(e.target.value)}
+                                        className="h-8.5 text-xs rounded-xl bg-card mt-0.5"
+                                    />
+                                </div>
+                            </div>
+
+                            <Button
+                                type="submit"
+                                disabled={bookingSubmitting}
+                                className="w-full rounded-full h-10 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+                            >
+                                {bookingSubmitting ? (
+                                    <span className="flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting Request...</span>
+                                ) : (
+                                    <span className="flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Confirm Consultation Request</span>
+                                )}
+                            </Button>
+                        </motion.form>
+                    )}
+
+                    {/* Booked Confirmation Box */}
+                    {bookedRequest && (
+                        <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="mt-4 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
+                            <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto">
+                                <CheckCircle2 className="w-5 h-5" />
+                            </div>
+                            <h4 className="font-head font-bold text-sm text-emerald-900 dark:text-emerald-300">Consultation Request Sent Successfully!</h4>
+                            <p className="text-xs text-muted-foreground">
+                                Status: <span className="font-bold text-amber-600 dark:text-amber-400">Pending Clinic Review</span>. The healthcare team has received your symptoms and referral summary.
+                            </p>
+                            <div className="pt-2 flex justify-center gap-2">
+                                <Link to="/my-requests">
+                                    <Button size="sm" className="rounded-full h-8.5 px-4 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white">
+                                        <ListOrdered className="w-3.5 h-3.5 mr-1.5" /> View in My Requests
+                                    </Button>
+                                </Link>
+                            </div>
+                        </motion.div>
+                    )}
+                </div>
+            )}
 
             {/* Sharing & 24-Hr Callback Automation Actions */}
             <div className="grid grid-cols-2 gap-2 mt-4">

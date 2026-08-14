@@ -18,6 +18,21 @@ export const LANGUAGES = [
     { code: "ta", name: "தமிழ்", en: "Tamil" },
 ];
 
+export const SPECIALTY_LIST = [
+    "General Physician",
+    "Pediatrician",
+    "Cardiologist",
+    "Neurologist",
+    "ENT",
+    "Dermatologist",
+    "Gynecologist",
+    "Orthopedic",
+    "Gastroenterologist",
+    "Pulmonologist",
+    "Ophthalmologist",
+    "Psychiatrist",
+];
+
 export const URGENCY_META = {
     emergency: {
         label: "Emergency",
@@ -56,3 +71,13 @@ export const URGENCY_META = {
         badge: "bg-purple-600 text-white font-bold",
     },
 };
+
+// Client Session Helper for Anonymous Patients
+export function getPatientSessionId() {
+    let sessId = localStorage.getItem("sv_patient_session_id");
+    if (!sessId) {
+        sessId = "sess_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now().toString(36);
+        localStorage.setItem("sv_patient_session_id", sessId);
+    }
+    return sessId;
+}
