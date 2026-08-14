@@ -6,7 +6,7 @@ import {
     RefreshCw, ArrowLeft, Stethoscope, Download, Search, Volume2, ShieldAlert,
     MapPin, Radio, Check, X, PhoneCall, Building2, UserCheck, ShieldCheck,
     CheckCircle2, XCircle, CheckCheck, Trash2, Edit3, Filter, Plus, ChevronRight,
-    Send, Info
+    Send, Info, Sparkles, HeartPulse, HeartHandshake, Eye, Lock
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,26 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { api, URGENCY_META, SPECIALTY_LIST } from "@/lib/api";
 
-const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
+const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home, needs_review: HeartPulse };
 const LANG_VOICE = { hi: "hi-IN", en: "en-US", bn: "bn-IN", ta: "ta-IN" };
-
-const ASR_LABELS = {
-    groq_whisper_v3: "⚡ Groq Whisper v3",
-    groq_whisper: "⚡ Groq Whisper",
-    whisper_local: "🎙️ Local Whisper",
-    openai_whisper: "🎙️ OpenAI Whisper",
-    twilio_speech: "📞 Twilio Voice",
-    default_fallback: "🌐 Web Audio",
-    "n/a (text input)": "✍️ Direct Text",
-};
-
-const LLM_LABELS = {
-    red_flag_override: "🛡️ Safety Gate (Red-Flag)",
-    "groq_llama3.3": "🧠 Groq Llama 3.3",
-    ollama_nemotron: "🦙 Ollama Nemotron",
-    emergent_gpt4o: "✨ GPT-4o",
-    rule_fallback: "📋 Safety Rules",
-};
 
 const REQUEST_STATUS_META = {
     pending: {
@@ -44,14 +26,14 @@ const REQUEST_STATUS_META = {
         badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
     },
     accepted: {
-        label: "Accepted",
+        label: "Accepted & Scheduled",
         icon: CheckCircle2,
         badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
     },
     declined: {
         label: "Declined",
         icon: XCircle,
-        badge: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30",
+        badge: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30",
     },
     completed: {
         label: "Completed",
@@ -112,7 +94,7 @@ export default function Dashboard() {
 }
 
 // -----------------------------------------------------------------------
-// Phase 1: Authentication & Registration Portal
+// Authentication & Registration Portal
 // -----------------------------------------------------------------------
 
 function AuthPortal({ onSuccess }) {
@@ -141,7 +123,7 @@ function AuthPortal({ onSuccess }) {
             toast.success(`Welcome back, ${data.name || data.email}!`);
             onSuccess(data);
         } catch (err) {
-            toast.error(err?.response?.data?.detail || "Invalid login details");
+            toast.error(err?.response?.data?.detail || "Invalid login credentials");
         } finally {
             setLoading(false);
         }
@@ -200,32 +182,48 @@ function AuthPortal({ onSuccess }) {
 
     return (
         <div className="min-h-screen grain-bg flex" data-testid="clinic-login">
-            {/* Left Hero Banner */}
+            {/* Left Hero Graphic Banner */}
             <div className="hidden lg:flex w-5/12 relative flex-col justify-between p-12 bg-zinc-950 text-white overflow-hidden">
-                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#22c55e_1px,transparent_1px)] [background-size:16px_16px]" />
+                <div className="absolute inset-0 opacity-25 bg-[radial-gradient(#f97316_1px,transparent_1px)] [background-size:20px_20px]" />
+                <div className="absolute top-1/3 -left-20 w-80 h-80 bg-primary/20 rounded-full blur-3xl" />
+                <div className="absolute bottom-10 right-0 w-80 h-80 bg-emerald-500/15 rounded-full blur-3xl" />
+
                 <div className="relative z-10">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center shadow-lg">
-                            <Activity className="w-5 h-5 text-primary-foreground" />
+                    <Link to="/" className="flex items-center gap-3 group">
+                        <div className="w-11 h-11 rounded-2xl gradient-bg flex items-center justify-center shadow-lg glow-primary">
+                            <Activity className="w-6 h-6 text-white" />
                         </div>
-                        <span className="font-head font-extrabold text-2xl tracking-tight">SwasthVaani</span>
+                        <span className="font-head font-black text-2xl tracking-tight">SwasthVaani</span>
+                    </Link>
+                </div>
+
+                <div className="relative z-10 max-w-md space-y-4">
+                    <Badge className="bg-primary/20 text-primary-foreground border-primary/30 text-xs font-bold px-3 py-1">
+                        Healthcare Provider Network
+                    </Badge>
+                    <h2 className="font-head font-black text-4xl tracking-tight leading-tight text-white">
+                        Direct Patient Referrals & Outbreak Surveillance
+                    </h2>
+                    <p className="text-zinc-400 text-sm leading-relaxed">
+                        Clinics and NGOs receive prioritized consultation bookings from voice triage, while monitoring community disease trends in their PIN code.
+                    </p>
+                    
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                        <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                            <Stethoscope className="w-4 h-4 text-primary" />
+                            <p className="text-xs font-bold text-white">Instant Patient Referrals</p>
+                            <p className="text-[11px] text-zinc-400">Direct booking from AI voice triage</p>
+                        </div>
+                        <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                            <p className="text-xs font-bold text-white">Area Health Radar</p>
+                            <p className="text-[11px] text-zinc-400">Passive symptom trend analytics</p>
+                        </div>
                     </div>
                 </div>
 
-                <div className="relative z-10 max-w-md">
-                    <Badge className="bg-primary/20 text-primary-foreground border-primary/30 text-xs font-bold mb-4">
-                        Healthcare Provider Network
-                    </Badge>
-                    <h2 className="font-head font-extrabold text-4xl tracking-tight leading-tight">
-                        Direct Patient Requests & Passive Area Surveillance
-                    </h2>
-                    <p className="mt-4 text-zinc-400 text-sm leading-relaxed">
-                        Clinics and NGOs receive prioritized consultation bookings from voice triage, while monitoring local disease outbreak trends in their PIN code.
-                    </p>
-                </div>
-
                 <div className="relative z-10 text-xs text-zinc-500 flex items-center justify-between border-t border-zinc-800 pt-4">
-                    <span>SwasthVaani Health System</span>
+                    <span>SwasthVaani National Health Grid</span>
                     <span>Role-Based Access Control</span>
                 </div>
             </div>
@@ -233,28 +231,26 @@ function AuthPortal({ onSuccess }) {
             {/* Right Form Area */}
             <div className="flex-1 flex flex-col justify-center items-center px-6 py-12 max-h-screen overflow-y-auto">
                 <div className="w-full max-w-md">
-                    <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6">
-                        <ArrowLeft className="w-4 h-4" /> <span className="font-semibold text-sm">Home</span>
+                    <Link to="/" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-xs font-bold">
+                        <ArrowLeft className="w-4 h-4" /> <span>Back to Home</span>
                     </Link>
 
-                    <div className="flex items-center justify-between mb-6 border-b border-border/60 pb-3">
-                        <div>
-                            <h1 className="font-head font-extrabold text-2xl tracking-tight">
-                                {tab === "signin" ? "Provider Portal Login" : "Register Facility"}
-                            </h1>
-                            <p className="text-muted-foreground mt-0.5 text-xs">
-                                {tab === "signin" ? "Sign in to manage patient requests and triage logs." : "Register your Clinic or NGO for patient referrals."}
-                            </p>
-                        </div>
+                    <div className="mb-6">
+                        <h1 className="font-head font-black text-2xl sm:text-3xl tracking-tight">
+                            {tab === "signin" ? "Provider Portal Login" : "Register Facility / NGO"}
+                        </h1>
+                        <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
+                            {tab === "signin" ? "Sign in to manage patient requests and area triage logs." : "Register your Clinic or NGO for patient referrals."}
+                        </p>
                     </div>
 
                     {/* Mode Toggle Pills */}
-                    <div className="flex bg-muted/70 p-1 rounded-xl mb-6 border border-border/60">
+                    <div className="flex bg-muted/80 p-1 rounded-2xl mb-6 border border-border/70">
                         <button
                             type="button"
                             onClick={() => setTab("signin")}
-                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                                tab === "signin" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            className={`flex-1 py-2 text-xs font-extrabold rounded-xl transition-all ${
+                                tab === "signin" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                             }`}
                         >
                             Sign In
@@ -262,57 +258,62 @@ function AuthPortal({ onSuccess }) {
                         <button
                             type="button"
                             onClick={() => setTab("register")}
-                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                                tab === "register" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            className={`flex-1 py-2 text-xs font-extrabold rounded-xl transition-all ${
+                                tab === "register" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                             }`}
                         >
-                            Register Clinic / NGO
+                            Register Facility
                         </button>
                     </div>
 
                     {tab === "signin" ? (
                         <form onSubmit={handleSignIn} className="space-y-4">
                             <div>
-                                <Label htmlFor="email" className="font-semibold text-xs">Email Address</Label>
+                                <Label htmlFor="email" className="font-bold text-xs">Login Email</Label>
                                 <Input
                                     id="email"
                                     data-testid="login-email"
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="mt-1 rounded-xl h-11 bg-card text-sm"
+                                    className="mt-1 rounded-2xl h-11 bg-card text-sm"
                                     placeholder="doctor@clinic.health"
                                     required
                                 />
                             </div>
 
                             <div>
-                                <Label htmlFor="password" className="font-semibold text-xs">Password</Label>
+                                <Label htmlFor="password" className="font-bold text-xs">Password</Label>
                                 <Input
                                     id="password"
                                     data-testid="login-password"
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="mt-1 rounded-xl h-11 bg-card text-sm"
+                                    className="mt-1 rounded-2xl h-11 bg-card text-sm"
                                     required
                                 />
                             </div>
 
-                            <Button type="submit" disabled={loading} data-testid="login-submit" className="w-full rounded-full h-11 font-bold bg-primary hover:bg-primary/90 text-primary-foreground mt-2">
-                                {loading ? "Signing in…" : "Sign In to Console"}
+                            <Button 
+                                type="submit" 
+                                disabled={loading} 
+                                data-testid="login-submit" 
+                                className="w-full rounded-2xl h-12 font-extrabold gradient-bg text-white shadow-md hover:opacity-95 mt-2"
+                            >
+                                {loading ? "Signing in…" : "Sign In to Provider Console"}
                             </Button>
 
                             {/* Demo Quick-Fill Buttons */}
-                            <div className="mt-6 pt-5 border-t border-border/60">
-                                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2.5">
-                                    Demo Credentials (One-Click Fill)
+                            <div className="mt-8 pt-6 border-t border-border/60">
+                                <p className="text-[11px] font-extrabold text-muted-foreground uppercase tracking-wider mb-3">
+                                    One-Click Demo Accounts
                                 </p>
                                 <div className="grid grid-cols-3 gap-2">
                                     <button
                                         type="button"
                                         onClick={() => setQuickDemo("clinic")}
-                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                        className="p-2.5 rounded-2xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all shadow-2xs"
                                     >
                                         🏥 Clinic Demo
                                         <span className="block font-normal text-[10px] text-muted-foreground truncate">clinic@swasthvaani</span>
@@ -320,7 +321,7 @@ function AuthPortal({ onSuccess }) {
                                     <button
                                         type="button"
                                         onClick={() => setQuickDemo("ngo")}
-                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                        className="p-2.5 rounded-2xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all shadow-2xs"
                                     >
                                         🤝 NGO Demo
                                         <span className="block font-normal text-[10px] text-muted-foreground truncate">ngo@swasthvaani</span>
@@ -328,9 +329,9 @@ function AuthPortal({ onSuccess }) {
                                     <button
                                         type="button"
                                         onClick={() => setQuickDemo("admin")}
-                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                        className="p-2.5 rounded-2xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all shadow-2xs"
                                     >
-                                        ⚡ Super Admin
+                                        ⚡ SuperAdmin
                                         <span className="block font-normal text-[10px] text-muted-foreground truncate">admin@swasthvaani</span>
                                     </button>
                                 </div>
@@ -382,7 +383,7 @@ function AuthPortal({ onSuccess }) {
                             </div>
 
                             <div>
-                                <Label className="text-[11px] font-semibold">Medical Qualifications / Certifications</Label>
+                                <Label className="text-[11px] font-semibold">Medical Qualifications / Reg #</Label>
                                 <Input
                                     value={regQualification}
                                     onChange={(e) => setRegQualification(e.target.value)}
@@ -404,7 +405,7 @@ function AuthPortal({ onSuccess }) {
                                                 onClick={() => toggleSpecialty(spec)}
                                                 className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
                                                     selected
-                                                        ? "bg-primary text-primary-foreground border-primary"
+                                                        ? "gradient-bg text-white border-transparent"
                                                         : "bg-background border-border text-muted-foreground hover:text-foreground"
                                                 }`}
                                             >
@@ -471,7 +472,11 @@ function AuthPortal({ onSuccess }) {
                                 </div>
                             </div>
 
-                            <Button type="submit" disabled={loading} className="w-full rounded-full h-11 font-bold bg-primary hover:bg-primary/90 text-primary-foreground mt-2 text-xs">
+                            <Button 
+                                type="submit" 
+                                disabled={loading} 
+                                className="w-full rounded-2xl h-11 font-bold gradient-bg text-white hover:opacity-95 text-xs mt-2"
+                            >
                                 {loading ? "Creating Account…" : "Complete Facility Registration"}
                             </Button>
                         </form>
@@ -483,7 +488,7 @@ function AuthPortal({ onSuccess }) {
 }
 
 // -----------------------------------------------------------------------
-// Phase 4: Clinic & NGO Dashboard View (Direct Requests + Area Triage)
+// Clinic & NGO Dashboard View (Direct Requests + Area Triage)
 // -----------------------------------------------------------------------
 
 function ClinicDashboard({ user, onLogout }) {
@@ -501,7 +506,6 @@ function ClinicDashboard({ user, onLogout }) {
     // Area filter state
     const [areaUrgencyFilter, setAreaUrgencyFilter] = useState("all");
     const [areaSearch, setAreaSearch] = useState("");
-    const [viewMode, setViewMode] = useState("table"); // table | outbreak
     const [selectedAreaItem, setSelectedAreaItem] = useState(null);
 
     const providerInfo = user.provider || {};
@@ -595,11 +599,11 @@ function ClinicDashboard({ user, onLogout }) {
     return (
         <div className="min-h-screen grain-bg" data-testid="clinic-dashboard">
             {/* Header */}
-            <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-md border-b border-border/80">
+            <header className="sticky top-0 z-30 glass-header border-b border-border/80">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-xs">
-                            <Activity className="w-5 h-5 text-primary-foreground" />
+                        <div className="w-9 h-9 rounded-xl gradient-bg flex items-center justify-center shadow-xs text-white">
+                            <Activity className="w-5 h-5" />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
@@ -627,15 +631,15 @@ function ClinicDashboard({ user, onLogout }) {
             </header>
 
             <main className="max-w-7xl mx-auto px-6 py-8">
-                {/* Top View Selector Tabs (Clearly Separate Views) */}
+                {/* Top View Selector Tabs */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border/60 mb-6">
                     <div>
-                        <h1 className="font-head font-extrabold text-2xl sm:text-3xl tracking-tight">Clinical Care Dashboard</h1>
-                        <p className="text-sm text-muted-foreground mt-0.5">Manage patient referrals or review passive health logs in your area.</p>
+                        <h1 className="font-head font-black text-2xl sm:text-3xl tracking-tight">Clinical Care Dashboard</h1>
+                        <p className="text-sm text-muted-foreground mt-0.5">Manage patient referrals or review community health triage in your area.</p>
                     </div>
 
                     {/* View Switcher Tabs */}
-                    <div className="flex bg-muted/80 p-1 rounded-2xl border border-border/60 self-start sm:self-auto">
+                    <div className="flex bg-muted/80 p-1 rounded-2xl border border-border/60 self-start sm:self-auto shadow-2xs">
                         <button
                             onClick={() => setActiveTab("direct_requests")}
                             data-testid="tab-direct-requests"
@@ -646,9 +650,9 @@ function ClinicDashboard({ user, onLogout }) {
                             }`}
                         >
                             <Stethoscope className="w-3.5 h-3.5 text-primary" />
-                            Direct Patient Requests
+                            Direct Patient Referrals
                             {pendingDirectCount > 0 && (
-                                <span className="w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+                                <span className="w-5 h-5 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse">
                                     {pendingDirectCount}
                                 </span>
                             )}
@@ -664,14 +668,12 @@ function ClinicDashboard({ user, onLogout }) {
                             }`}
                         >
                             <MapPin className="w-3.5 h-3.5 text-secondary" />
-                            Area Triage Overview
+                            Area Surveillance Radar
                         </button>
                     </div>
                 </div>
 
-                {/* ------------------------------------------------------------------- */}
-                {/* TAB 1: DIRECT PATIENT REQUESTS VIEW                                 */}
-                {/* ------------------------------------------------------------------- */}
+                {/* TAB 1: DIRECT PATIENT REFERRALS VIEW */}
                 {activeTab === "direct_requests" && (
                     <div className="space-y-6" data-testid="direct-requests-panel">
                         {/* Summary Metrics */}
@@ -707,7 +709,7 @@ function ClinicDashboard({ user, onLogout }) {
                         </div>
 
                         {/* Requests Feed */}
-                        <div className="bg-card border border-border/80 rounded-2xl p-6 shadow-xs">
+                        <div className="bg-card border border-border/80 rounded-3xl p-6 shadow-sm">
                             <div className="flex items-center justify-between mb-4 border-b border-border/50 pb-3">
                                 <div>
                                     <h3 className="font-head font-bold text-lg text-foreground">Direct Consultation Requests</h3>
@@ -718,8 +720,8 @@ function ClinicDashboard({ user, onLogout }) {
 
                             {directRequests.length === 0 ? (
                                 <div className="py-16 text-center text-muted-foreground flex flex-col items-center">
-                                    <Stethoscope className="w-8 h-8 text-muted-foreground/50 mb-3" />
-                                    <p className="font-semibold text-sm">No direct patient requests received yet.</p>
+                                    <Stethoscope className="w-10 h-10 text-muted-foreground/40 mb-3" />
+                                    <p className="font-bold text-base text-foreground">No direct patient requests received yet</p>
                                     <p className="text-xs text-muted-foreground mt-1 max-w-sm">
                                         When patients complete voice triage and pick your facility, their symptoms and contact details will appear here.
                                     </p>
@@ -734,7 +736,7 @@ function ClinicDashboard({ user, onLogout }) {
                                         return (
                                             <div
                                                 key={req.id || req._id || idx}
-                                                className="bg-background/60 border border-border/70 rounded-2xl p-5 hover:border-border transition-all"
+                                                className="bg-card border border-border/80 rounded-2xl p-5 hover:border-primary/40 transition-all shadow-xs"
                                                 data-testid={`clinic-request-item-${req.id || idx}`}
                                             >
                                                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-3 border-b border-border/40">
@@ -790,7 +792,7 @@ function ClinicDashboard({ user, onLogout }) {
                                                                 <Button
                                                                     size="sm"
                                                                     onClick={() => setActingRequest(req)}
-                                                                    className="rounded-full h-8 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                                    className="rounded-full h-8 px-4 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
                                                                 >
                                                                     <Check className="w-3.5 h-3.5 mr-1" /> Accept & Schedule
                                                                 </Button>
@@ -809,7 +811,7 @@ function ClinicDashboard({ user, onLogout }) {
                                                             <Button
                                                                 size="sm"
                                                                 onClick={() => handleUpdateStatus(req.id || req._id, "completed")}
-                                                                className="rounded-full h-8 px-3 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white"
+                                                                className="rounded-full h-8 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
                                                             >
                                                                 <CheckCheck className="w-3.5 h-3.5 mr-1" /> Mark Complete
                                                             </Button>
@@ -836,9 +838,7 @@ function ClinicDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* ------------------------------------------------------------------- */}
-                {/* TAB 2: AREA OVERVIEW (PASSIVE SURVEILLANCE & LOGS)                   */}
-                {/* ------------------------------------------------------------------- */}
+                {/* TAB 2: AREA OVERVIEW (PASSIVE SURVEILLANCE & LOGS) */}
                 {activeTab === "area_triage" && (
                     <div className="space-y-6" data-testid="area-triage-panel">
                         {/* Summary Metrics */}
@@ -862,8 +862,8 @@ function ClinicDashboard({ user, onLogout }) {
                                     <button
                                         key={t.id}
                                         onClick={() => setAreaUrgencyFilter(t.id)}
-                                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-colors ${
-                                            areaUrgencyFilter === t.id ? "bg-foreground text-background border-foreground" : "bg-card border-border text-muted-foreground hover:text-foreground"
+                                        className={`px-4 py-2 rounded-full text-xs font-bold border transition-all ${
+                                            areaUrgencyFilter === t.id ? "bg-foreground text-background border-foreground shadow-xs" : "bg-card border-border text-muted-foreground hover:text-foreground"
                                         }`}
                                     >
                                         {t.label}
@@ -871,27 +871,27 @@ function ClinicDashboard({ user, onLogout }) {
                                 ))}
                             </div>
 
-                            <div className="relative w-full sm:w-64">
-                                <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+                            <div className="relative w-full sm:w-72">
+                                <Search className="w-4 h-4 absolute left-3.5 top-3 text-muted-foreground" />
                                 <Input
                                     placeholder="Search symptoms or caller..."
                                     value={areaSearch}
                                     onChange={(e) => setAreaSearch(e.target.value)}
-                                    className="pl-9 rounded-full bg-card h-10 text-xs"
+                                    className="pl-9.5 rounded-full bg-card h-10 text-xs border-border/80"
                                 />
                             </div>
                         </div>
 
                         {/* Area Triage Table */}
-                        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
-                            <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-muted/60 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <div className="bg-card border border-border/80 rounded-3xl overflow-hidden shadow-sm">
+                            <div className="grid grid-cols-12 gap-4 px-6 py-3.5 bg-muted/60 text-xs font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/60">
                                 <div className="col-span-3">Caller</div>
                                 <div className="col-span-4">Symptoms & Summary</div>
                                 <div className="col-span-2">Triage Urgency</div>
                                 <div className="col-span-1">Audio</div>
                                 <div className="col-span-2 text-right">Time</div>
                             </div>
-                            <div className="divide-y divide-border">
+                            <div className="divide-y divide-border/60">
                                 {filteredAreaTriage.length === 0 ? (
                                     <div className="px-6 py-16 text-center text-muted-foreground">
                                         No area triage logs matching current filter.
@@ -906,16 +906,16 @@ function ClinicDashboard({ user, onLogout }) {
                                                 key={r.id || i}
                                                 onClick={() => setSelectedAreaItem(r)}
                                                 className={`grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-muted/30 transition-all border-l-4 cursor-pointer ${
-                                                    isEmergency ? "border-l-destructive bg-destructive/5 hover:bg-destructive/10" : "border-l-transparent"
+                                                    isEmergency ? "border-l-rose-600 bg-rose-500/5 hover:bg-rose-500/10" : "border-l-transparent"
                                                 }`}
                                             >
-                                                <div className="col-span-3 flex items-center gap-2 min-w-0">
+                                                <div className="col-span-3 flex items-center gap-2.5 min-w-0">
                                                     <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${r.source === "ivr" ? "bg-secondary/15 text-secondary" : "bg-primary/10 text-primary"}`}>
                                                         {r.source === "ivr" ? <Phone className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
                                                     </span>
                                                     <div className="min-w-0">
-                                                        <p className="font-semibold truncate text-sm">{r.caller}</p>
-                                                        <p className="text-xs text-muted-foreground capitalize">{r.source} · {r.language.toUpperCase()}</p>
+                                                        <p className="font-bold truncate text-sm text-foreground">{r.caller}</p>
+                                                        <p className="text-[11px] text-muted-foreground capitalize">{r.source} · {r.language?.toUpperCase()}</p>
                                                     </div>
                                                 </div>
 
@@ -925,26 +925,32 @@ function ClinicDashboard({ user, onLogout }) {
                                                     {r.symptoms && r.symptoms.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 mt-1.5">
                                                             {r.symptoms.slice(0, 3).map((s, si) => (
-                                                                <span key={si} className="bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full font-medium">{s}</span>
+                                                                <span key={si} className="bg-primary/10 text-primary text-[10px] px-2 py-0.5 rounded-full font-bold">{s}</span>
                                                             ))}
                                                         </div>
                                                     )}
                                                 </div>
 
                                                 <div className="col-span-2 flex flex-col gap-1">
-                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1 w-fit text-xs`}>
+                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-bold border-0 px-3 py-1 w-fit text-xs`}>
                                                         <Icon className="w-3.5 h-3.5" /> {meta.label}
                                                     </Badge>
                                                 </div>
 
                                                 <div className="col-span-1">
-                                                    <button onClick={(e) => { e.stopPropagation(); playDoctorAudio(r); }}
-                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center" title="Listen to Patient Audio">
+                                                    <button
+                                                        onClick={(e) => {
+                                                             e.stopPropagation();
+                                                             playDoctorAudio(r.spoken || r.advice || r.transcript, r.language);
+                                                        }}
+                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-white transition-colors flex items-center justify-center shadow-2xs"
+                                                        title="Play voice output"
+                                                    >
                                                         <Volume2 className="w-4 h-4" />
                                                     </button>
                                                 </div>
 
-                                                <div className="col-span-2 text-right text-xs font-medium text-muted-foreground">
+                                                <div className="col-span-2 text-right text-xs font-semibold text-muted-foreground">
                                                     {new Date(r.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                                                 </div>
                                             </div>
@@ -960,12 +966,12 @@ function ClinicDashboard({ user, onLogout }) {
             {/* Accept / Schedule Dialog Box */}
             <AnimatePresence>
                 {actingRequest && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/50 backdrop-blur-xs" onClick={() => setActingRequest(null)}>
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/60 backdrop-blur-sm" onClick={() => setActingRequest(null)}>
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-card border border-border rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4"
+                            className="bg-card border border-border/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4"
                             onClick={(e) => e.stopPropagation()}
                         >
                             <div className="flex items-center justify-between">
@@ -976,31 +982,31 @@ function ClinicDashboard({ user, onLogout }) {
                             </div>
 
                             <p className="text-xs text-muted-foreground">
-                                Add an optional appointment time, doctor note, or clinic instructions that will be displayed to the patient on their tracking page.
+                                Add an optional appointment slot or doctor note that will be instantly visible to the patient on their tracking portal.
                             </p>
 
                             <div>
-                                <Label className="text-xs font-semibold">Doctor Instructions / Visit Slot</Label>
+                                <Label className="text-xs font-bold">Doctor Instructions / Appointment Slot</Label>
                                 <Textarea
                                     rows={3}
-                                    placeholder="e.g. Appointment scheduled today at 3:00 PM. Please bring past medical reports."
+                                    placeholder="e.g. Appointment confirmed for today at 3:30 PM. Please bring any past prescription slips."
                                     value={actionNote}
                                     onChange={(e) => setActionNote(e.target.value)}
-                                    className="mt-1 text-xs rounded-xl bg-background"
+                                    className="mt-1.5 text-xs rounded-2xl bg-background"
                                 />
                             </div>
 
                             <div className="flex justify-end gap-2 pt-2">
-                                <Button variant="ghost" size="sm" onClick={() => setActingRequest(null)} className="rounded-full text-xs font-semibold">
+                                <Button variant="ghost" size="sm" onClick={() => setActingRequest(null)} className="rounded-full text-xs font-bold">
                                     Cancel
                                 </Button>
                                 <Button
                                     size="sm"
                                     disabled={updatingStatus}
                                     onClick={() => handleUpdateStatus(actingRequest.id || actingRequest._id, "accepted", actionNote)}
-                                    className="rounded-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-5"
+                                    className="rounded-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-5 shadow-xs"
                                 >
-                                    {updatingStatus ? "Accepting..." : "Confirm & Send to Patient"}
+                                    {updatingStatus ? "Confirming..." : "Confirm & Notify Patient"}
                                 </Button>
                             </div>
                         </motion.div>
@@ -1011,12 +1017,12 @@ function ClinicDashboard({ user, onLogout }) {
             {/* Area Case Detail Modal */}
             <AnimatePresence>
                 {selectedAreaItem && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/50 backdrop-blur-xs" onClick={() => setSelectedAreaItem(null)}>
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/60 backdrop-blur-sm" onClick={() => setSelectedAreaItem(null)}>
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-card border border-border rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative space-y-4"
+                            className="bg-card border border-border/80 rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative space-y-4"
                             onClick={(e) => e.stopPropagation()}
                         >
                             <button onClick={() => setSelectedAreaItem(null)} className="absolute top-5 right-5 text-muted-foreground hover:text-foreground">
@@ -1026,7 +1032,7 @@ function ClinicDashboard({ user, onLogout }) {
                             <h3 className="font-head font-bold text-xl">Area Triage Case Details</h3>
                             <div className="text-xs space-y-2">
                                 <p><b>Caller:</b> {selectedAreaItem.caller}</p>
-                                <p><b>Language:</b> {selectedAreaItem.language.toUpperCase()}</p>
+                                <p><b>Language:</b> {selectedAreaItem.language?.toUpperCase()}</p>
                                 <p><b>Urgency:</b> <span className="uppercase font-bold">{selectedAreaItem.urgency}</span></p>
                                 <p><b>Transcript:</b> "{selectedAreaItem.transcript}"</p>
                                 <p><b>Advice:</b> {selectedAreaItem.advice}</p>
@@ -1040,7 +1046,7 @@ function ClinicDashboard({ user, onLogout }) {
 }
 
 // -----------------------------------------------------------------------
-// Phase 5: Super Admin Portal View
+// Super Admin Portal View
 // -----------------------------------------------------------------------
 
 function SuperAdminDashboard({ user, onLogout }) {
@@ -1100,12 +1106,12 @@ function SuperAdminDashboard({ user, onLogout }) {
             <header className="sticky top-0 z-30 bg-zinc-950 text-white border-b border-zinc-800">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-amber-500 text-zinc-950 flex items-center justify-center font-bold">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500 text-zinc-950 flex items-center justify-center font-bold shadow-md">
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
-                                <span className="font-head font-extrabold tracking-tight">SwasthVaani SuperAdmin</span>
+                                <span className="font-head font-black tracking-tight">SwasthVaani SuperAdmin</span>
                                 <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px] font-bold">
                                     Root Access
                                 </Badge>
@@ -1137,7 +1143,7 @@ function SuperAdminDashboard({ user, onLogout }) {
                     />
                     <StatCard
                         testid="admin-stat-ngos"
-                        icon={HeartHandshakeIcon}
+                        icon={HeartHandshake}
                         label="Registered NGOs"
                         value={adminStats?.providers?.ngos ?? providers.filter(p => p.type === "ngo").length}
                         tone="bg-secondary/15 text-secondary"
@@ -1180,7 +1186,7 @@ function SuperAdminDashboard({ user, onLogout }) {
 
                 {/* Providers Table Tab */}
                 {activeTab === "providers" && (
-                    <div className="bg-card border border-border/80 rounded-2xl overflow-hidden shadow-xs">
+                    <div className="bg-card border border-border/80 rounded-3xl overflow-hidden shadow-sm">
                         <div className="p-6 border-b border-border/60 flex items-center justify-between">
                             <div>
                                 <h3 className="font-head font-bold text-lg text-foreground">Registered Healthcare Facilities & NGOs</h3>
@@ -1256,7 +1262,7 @@ function SuperAdminDashboard({ user, onLogout }) {
                                                             <Button
                                                                 size="sm"
                                                                 onClick={() => handleUpdateProviderStatus(p.id || p._id, "approved")}
-                                                                className="rounded-full h-7 px-3 text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                                                                className="rounded-full h-7 px-3 text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-2xs"
                                                             >
                                                                 Approve
                                                             </Button>
@@ -1303,13 +1309,13 @@ function SuperAdminDashboard({ user, onLogout }) {
 
                 {/* Global Triage Feed Tab */}
                 {activeTab === "triage_feed" && (
-                    <div className="bg-card border border-border/80 rounded-2xl p-6 shadow-xs">
+                    <div className="bg-card border border-border/80 rounded-3xl p-6 shadow-sm">
                         <h3 className="font-head font-bold text-lg text-foreground mb-4">Global Health Triage Activity</h3>
                         <div className="space-y-3">
                             {triageFeed.map((item, idx) => {
                                 const urgencyMeta = URGENCY_META[item.urgency] || URGENCY_META.soon;
                                 return (
-                                    <div key={idx} className="bg-background/60 border border-border/60 rounded-xl p-4 flex items-center justify-between text-xs">
+                                    <div key={idx} className="bg-background/60 border border-border/60 rounded-2xl p-4 flex items-center justify-between text-xs">
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <span className="font-bold text-foreground">{item.caller}</span>
@@ -1324,7 +1330,7 @@ function SuperAdminDashboard({ user, onLogout }) {
                                             </div>
                                             <p className="text-muted-foreground mt-1 italic">"{item.transcript}"</p>
                                         </div>
-                                        <div className="text-right text-muted-foreground text-[11px]">
+                                        <div className="text-right text-muted-foreground text-[11px] font-medium">
                                             {new Date(item.created_at).toLocaleString()}
                                         </div>
                                     </div>
@@ -1338,18 +1344,14 @@ function SuperAdminDashboard({ user, onLogout }) {
     );
 }
 
-function HeartHandshakeIcon(props) {
-    return <Users {...props} />;
-}
-
 function StatCard({ icon: Icon, label, value, tone, testid }) {
     return (
-        <div className="bg-card border border-border/80 rounded-2xl p-5 shadow-xs" data-testid={testid}>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${tone}`}>
+        <div className="bg-card border border-border/80 rounded-3xl p-5 shadow-xs hover:border-primary/40 transition-all" data-testid={testid}>
+            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center mb-3.5 shadow-2xs ${tone}`}>
                 <Icon className="w-5 h-5" />
             </div>
-            <p className="font-head font-extrabold text-3xl tracking-tight text-foreground">{value}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+            <p className="font-head font-black text-3xl sm:text-4xl tracking-tight text-foreground">{value}</p>
+            <p className="text-xs font-semibold text-muted-foreground mt-1">{label}</p>
         </div>
     );
 }

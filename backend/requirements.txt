@@ -35,3 +35,4 @@ soundfile
 emergentintegrations
 anthropic>=0.25.0
 httpx>=0.27.0
+twilio>=9.0.0

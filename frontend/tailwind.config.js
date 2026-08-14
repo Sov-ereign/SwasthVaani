@@ -9,7 +9,8 @@ module.exports = {
         extend: {
             fontFamily: {
                 head: ['Manrope', 'sans-serif'],
-                body: ['Figtree', 'sans-serif'],
+                body: ['"Plus Jakarta Sans"', 'Figtree', 'sans-serif'],
+                mono: ['"JetBrains Mono"', 'monospace'],
             },
             borderRadius: {
                 lg: 'var(--radius)',

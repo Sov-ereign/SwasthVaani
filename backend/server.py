@@ -91,9 +91,13 @@ load_dotenv(ROOT_DIR / '.env')
 
 client = None
 client_loop = None
+_mongo_disabled = False
 
 def get_db():
-    global client, client_loop
+    global client, client_loop, _mongo_disabled
+    if _mongo_disabled:
+        return None
+
     try:
         curr_loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -109,12 +113,17 @@ def get_db():
             client_loop = None
 
     if client is None:
+        mongo_url = os.environ.get('MONGO_URL', '')
+        if not mongo_url:
+            # If no MONGO_URL explicitly configured, use fast in-memory store for instant responses
+            _mongo_disabled = True
+            return None
         try:
-            mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-            client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=8000)
+            client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=1000)
             client_loop = curr_loop
         except Exception as e:
             logger.warning(f"Mongo client setup failed: {e}")
+            _mongo_disabled = True
             return None
     db_name = os.environ.get('DB_NAME', 'swasthvaani')
     return client[db_name]
@@ -1253,7 +1262,14 @@ async def transcribe_audio(content: bytes, language: str = "hi", filename: str =
 
 
 @api_router.post("/triage/voice")
-async def triage_voice(request: Request, audio: UploadFile = File(...), language: str = Form("hi"), caller: str = Form("Web user"), pincode: Optional[str] = Form(None)):
+async def triage_voice(
+    request: Request,
+    audio: UploadFile = File(...),
+    language: str = Form("hi"),
+    caller: str = Form("Web user"),
+    pincode: Optional[str] = Form(None),
+    transcript_hint: Optional[str] = Form(None)
+):
     start_t = time.time()
     await rate_limit_ip(request)
     content = await audio.read()
@@ -1263,14 +1279,20 @@ async def triage_voice(request: Request, audio: UploadFile = File(...), language
     filename = audio.filename or "audio.webm"
     transcript, asr_prov = await transcribe_audio(content, language, filename)
 
+    # If backend ASR returned empty or failed, use browser SpeechRecognition transcript_hint
+    if not transcript.strip() and transcript_hint and transcript_hint.strip():
+        transcript = transcript_hint.strip()
+        asr_prov = "browser_speech_recognition"
+
+    # If still empty, use neutral non-emergency symptom fallback
     if not transcript.strip():
         default_transcripts = {
-            "hi": "मुझे बुखार और सीने में दर्द है",
-            "bn": "আমার জ্বর এবং বুকে ব্যথা আছে",
-            "en": "I have fever and chest pain",
-            "ta": "எனக்கு காய்ச்சல் மற்றும் நெஞ்சு வலி உள்ளது"
+            "hi": "मुझे सिरदर्द है और अस्वस्थ महसूस हो रहा है",
+            "bn": "আমার মাথা ব্যথা এবং শরীর খারাপ লাগছে",
+            "en": "I have a headache and feel unwell",
+            "ta": "எனக்கு தலைவலி மற்றும் உடல்நலக்குறைவு உள்ளது"
         }
-        transcript = default_transcripts.get(language, "I have fever and chest pain")
+        transcript = default_transcripts.get(language, "I have a headache and feel unwell")
         asr_prov = "default_fallback"
 
     doc = await run_triage(transcript, language, caller, "web", asr_provider=asr_prov, start_time=start_t)
@@ -1713,20 +1735,23 @@ except ImportError:
 
 async def validate_twilio_request(request: Request):
     """Validate X-Twilio-Signature header to ensure request originated from Twilio."""
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    if not auth_token or not HAS_TWILIO:
-        # If TWILIO_AUTH_TOKEN is not configured, skip validation for local dev/mocking
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    validate_sig = os.environ.get("TWILIO_VALIDATE_SIGNATURE", "true").lower() == "true"
+    
+    # If TWILIO_AUTH_TOKEN is not configured or validation is explicitly disabled, bypass
+    if not auth_token or not HAS_TWILIO or not validate_sig:
         return
+
     signature = request.headers.get("X-Twilio-Signature", "")
     if not signature:
         logger.warning("Missing X-Twilio-Signature header on IVR webhook call")
         raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
 
-    url = str(request.url)
-    public_url = os.environ.get("PUBLIC_WEBHOOK_URL", "")
+    # Determine effective external URL
+    public_url = os.environ.get("PUBLIC_WEBHOOK_URL", "").strip()
     if public_url:
         parsed_pub = urlparse(public_url)
-        parsed_req = urlparse(url)
+        parsed_req = urlparse(str(request.url))
         url = urlunparse((
             parsed_pub.scheme or parsed_req.scheme,
             parsed_pub.netloc or parsed_req.netloc,
@@ -1735,13 +1760,43 @@ async def validate_twilio_request(request: Request):
             parsed_req.query,
             parsed_req.fragment
         ))
+    else:
+        scheme = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto") or request.url.scheme
+        host = request.headers.get("x-forwarded-host") or request.headers.get("X-Forwarded-Host") or request.headers.get("host") or request.url.netloc
+        url = f"{scheme}://{host}{request.url.path}"
+        if request.url.query:
+            url += f"?{request.url.query}"
 
     form = await request.form()
     data = {k: v for k, v in form.items() if isinstance(v, str)}
     validator = RequestValidator(auth_token)
     if not validator.validate(url, data, signature):
-        logger.warning(f"Invalid X-Twilio-Signature for request URL: {url}")
-        raise HTTPException(status_code=403, detail="Invalid Twilio Signature")
+        logger.warning(f"Invalid X-Twilio-Signature for request URL: {url} (Verify TWILIO_AUTH_TOKEN & PUBLIC_WEBHOOK_URL)")
+        raise HTTPException(status_code=403, detail="Invalid Twilio Signature. Check TWILIO_AUTH_TOKEN in .env")
+
+
+def send_twilio_sms(to_phone: str, message_body: str) -> bool:
+    """Send SMS via Twilio when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN & TWILIO_PHONE_NUMBER are configured."""
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    from_phone = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+
+    if not account_sid or not auth_token or not from_phone or not HAS_TWILIO:
+        return False
+
+    try:
+        from twilio.rest import Client
+        client = Client(account_sid, auth_token)
+        msg = client.messages.create(
+            body=message_body[:1500],
+            from_=from_phone,
+            to=to_phone
+        )
+        logger.info(f"Twilio SMS sent to {to_phone}: SID={msg.sid}")
+        return True
+    except Exception as e:
+        logger.error(f"Twilio SMS delivery error for {to_phone}: {e}")
+        return False
 
 
 def twiml(body: str) -> Response:
@@ -1753,8 +1808,8 @@ def twiml(body: str) -> Response:
 async def ivr_voice(request: Request):
     await validate_twilio_request(request)
     body = (
-        '<Gather input="dtmf" numDigits="1" action="/api/ivr/collect" method="POST" timeout="6">'
-        '<Say voice="Polly.Aditi">Welcome to Swasth Vaani, your voice health helper. '
+        '<Gather input="dtmf speech" numDigits="1" action="/api/ivr/collect" method="POST" timeout="6">'
+        '<Say voice="Polly.Aditi">Welcome to Swasth Vaani, your AI voice health helper. '
         'For Hindi press 1. For English press 2. For Bengali press 3. For Tamil press 4.</Say>'
         '</Gather>'
         '<Redirect method="POST">/api/ivr/collect?Digits=1</Redirect>'
@@ -1767,13 +1822,22 @@ async def ivr_collect(request: Request):
     await validate_twilio_request(request)
     form = await request.form()
     digit = form.get("Digits", "1")
+    speech = str(form.get("SpeechResult", "")).lower()
+    
     digit_str = digit if isinstance(digit, str) else "1"
+    if "english" in speech or "two" in speech:
+        digit_str = "2"
+    elif "bengali" in speech or "bangla" in speech or "three" in speech:
+        digit_str = "3"
+    elif "tamil" in speech or "four" in speech:
+        digit_str = "4"
+
     lang = {"1": "hi", "2": "en", "3": "bn", "4": "ta"}.get(digit_str, "hi")
     l = LANGS[lang]
     prompts = {
         "hi": "अपनी बीमारी या लक्षण बोलिए। बोलने के बाद रुक जाइए।",
         "en": "Please describe your symptoms clearly after the tone, then pause.",
-        "bn": "বিープের পর আপনার লক্ষণগুলি বলুন, তারপর থামুন।",
+        "bn": "বিপের পর আপনার লক্ষণগুলি বলুন, তারপর থামুন।",
         "ta": "உங்கள் அறிகுறிகளைச் சொல்லுங்கள், பிறகு நிறுத்துங்கள்.",
     }
     body = (
@@ -1827,18 +1891,33 @@ async def ivr_result(request: Request, lang: str = "hi"):
             logger.error(f"Error fetching/transcribing Twilio recording: {e}")
 
     if not transcript.strip():
-        body = f'<Say voice="{l["polly"]}">Sorry, we could not hear your symptoms. Please try calling back. Goodbye.</Say><Hangup/>'
+        body = f'<Say voice="{l["polly"]}">Sorry, we could not hear your symptoms clearly. Please try calling back. Goodbye.</Say><Hangup/>'
         return twiml(body)
 
     try:
         doc = await run_triage(transcript, lang, caller, "ivr", asr_provider=asr_prov, start_time=start_t)
         spoken = doc.spoken or doc.advice
+
+        # Send follow-up SMS if valid phone number
+        if caller_raw_str.startswith("+"):
+            sms_text = f"🩺 SwasthVaani Triage Report ({doc.urgency.upper()}):\n\nSymptoms: {doc.summary or transcript}\n\nAdvice: {doc.advice}"
+            asyncio.create_task(asyncio.to_thread(send_twilio_sms, caller_raw_str, sms_text))
+
     except Exception as e:
         logger.error(f"IVR triage failed: {e}")
         spoken = "Sorry, we could not process your request. Please consult a health worker immediately."
 
     body = f'<Say voice="{l["polly"]}">{spoken}</Say><Say voice="{l["polly"]}">Thank you for calling Swasth Vaani.</Say><Hangup/>'
     return twiml(body)
+
+
+@api_router.post("/ivr/send-sms")
+async def api_send_sms(to_phone: str = Form(...), message: str = Form(...)):
+    """Direct API endpoint to send outbound SMS via Twilio."""
+    sent = send_twilio_sms(to_phone.strip(), message.strip())
+    if not sent:
+        raise HTTPException(status_code=400, detail="Could not dispatch SMS. Verify Twilio configuration in .env")
+    return {"status": "sent", "to": to_phone}
 
 
 # Tier 3.2: IVR Confirmation Round Endpoint
