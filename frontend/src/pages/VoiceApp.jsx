@@ -670,7 +670,8 @@ export default function VoiceApp() {
                             mode={mode} 
                             onReset={reset} 
                             onReplay={() => playAudio(result.audio_base64, result.spoken || result.question || result.advice)} 
-                            onSubmitFollowUp={(answerText) => submitTextDirect(answerText)}
+                            onSubmitFollowUpText={(answerText) => submitTextDirect(answerText)}
+                            onSubmitFollowUpAudioVM={(blob, recognizedText) => submitAudio(blob, recognizedText)}
                         />
                     )}
                 </AnimatePresence>
@@ -679,7 +680,7 @@ export default function VoiceApp() {
     );
 }
 
-function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp }) {
+function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUpText, onSubmitFollowUpAudioVM }) {
     if (result.status_mode === "follow_up") {
         return (
             <FollowUpCard 
@@ -688,7 +689,8 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
                 t={t}
                 onReset={onReset}
                 onReplay={onReplay}
-                onSubmitAnswer={onSubmitFollowUp}
+                onSubmitAnswerText={onSubmitFollowUpText}
+                onSubmitAudioVM={onSubmitFollowUpAudioVM}
             />
         );
     }
@@ -1120,13 +1122,79 @@ function ResultCard({ result, lang, t, mode, onReset, onReplay, onSubmitFollowUp
     );
 }
 
-function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswer }) {
+function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswerText, onSubmitAudioVM }) {
+    const [isRecording, setIsRecording] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [liveTranscript, setLiveTranscript] = useState("");
     const [answerText, setAnswerText] = useState("");
+    const [showTextFallback, setShowTextFallback] = useState(false);
 
-    const handleAnswerSubmit = (e) => {
+    const mediaRef = useRef(null);
+    const chunksRef = useRef([]);
+    const recognitionRef = useRef(null);
+    const liveTranscriptRef = useRef("");
+
+    const startVMRecording = async () => {
+        liveTranscriptRef.current = "";
+        setLiveTranscript("");
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            try {
+                const sr = new SpeechRecognition();
+                sr.continuous = true;
+                sr.interimResults = true;
+                sr.lang = LANG_VOICE[lang] || "hi-IN";
+                sr.onresult = (e) => {
+                    let trans = "";
+                    for (let i = e.resultIndex; i < e.results.length; i++) {
+                        trans += e.results[i][0].transcript;
+                    }
+                    liveTranscriptRef.current = trans;
+                    setLiveTranscript(trans);
+                };
+                sr.start();
+                recognitionRef.current = sr;
+            } catch (e) {
+                console.warn("SpeechRecognition init error:", e);
+            }
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mr = new MediaRecorder(stream);
+            chunksRef.current = [];
+            mr.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
+            mr.onstop = async () => {
+                stream.getTracks().forEach((tr) => tr.stop());
+                const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+                setIsProcessing(true);
+                await onSubmitAudioVM(blob, liveTranscriptRef.current);
+                setIsProcessing(false);
+                setIsRecording(false);
+            };
+            mediaRef.current = mr;
+            mr.start();
+            setIsRecording(true);
+        } catch (e) {
+            toast.error("Microphone access denied. You can type your answer below.");
+            setShowTextFallback(true);
+        }
+    };
+
+    const stopVMRecording = () => {
+        if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch (e) {}
+        }
+        if (mediaRef.current && mediaRef.current.state !== "inactive") {
+            mediaRef.current.stop();
+        }
+    };
+
+    const handleAnswerSubmitText = (e) => {
         if (e) e.preventDefault();
         if (!answerText.trim()) return;
-        onSubmitAnswer(answerText.trim());
+        onSubmitAnswerText(answerText.trim());
         setAnswerText("");
     };
 
@@ -1156,11 +1224,11 @@ function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswer }) {
             </div>
 
             {/* Question Card */}
-            <div className="bg-card border border-primary/30 rounded-[2rem] p-6 sm:p-7 shadow-xl space-y-4">
-                <div className="flex items-start justify-between gap-3">
+            <div className="bg-card border border-primary/30 rounded-[2.5rem] p-6 sm:p-7 shadow-xl space-y-5 flex flex-col items-center">
+                <div className="w-full flex items-start justify-between gap-3">
                     <div className="space-y-1">
-                        <p className="text-xs font-extrabold uppercase text-primary tracking-wide">
-                            Follow-up Question
+                        <p className="text-xs font-extrabold uppercase text-primary tracking-wide flex items-center gap-1.5">
+                            <Volume2 className="w-4 h-4 text-primary animate-pulse" /> AI Spoken Clarification Question
                         </p>
                         <h3 className="font-head font-extrabold text-xl sm:text-2xl text-foreground leading-snug">
                             "{result.question || result.spoken}"
@@ -1171,39 +1239,102 @@ function FollowUpCard({ result, lang, t, onReset, onReplay, onSubmitAnswer }) {
                         variant="ghost" 
                         onClick={onReplay}
                         className="rounded-full shrink-0 bg-primary/10 hover:bg-primary/20 text-primary w-11 h-11"
-                        title="Listen to question"
+                        title="Replay Spoken Question"
                     >
                         <Volume2 className="w-5 h-5" />
                     </Button>
                 </div>
 
-                <div className="border-t border-border/60 pt-4 space-y-3">
-                    <Label className="text-xs font-bold text-foreground">Type your answer / clarification:</Label>
-                    <form onSubmit={handleAnswerSubmit} className="space-y-3">
-                        <Textarea 
-                            value={answerText}
-                            onChange={(e) => setAnswerText(e.target.value)}
-                            placeholder="e.g. It started 2 days ago, and I also have a rash..."
-                            rows={3}
-                            className="rounded-2xl text-sm bg-background border-border/80"
-                        />
-                        <div className="flex items-center justify-between gap-2">
-                            <Button 
-                                type="button" 
-                                variant="ghost" 
-                                onClick={onReset}
-                                className="rounded-full text-xs font-bold text-muted-foreground hover:text-foreground"
-                            >
-                                Start Over
-                            </Button>
-                            <Button 
-                                type="submit" 
-                                className="rounded-full px-6 font-bold gradient-bg text-white shadow-md text-xs h-10"
-                            >
-                                Submit Clarification <ChevronRight className="w-4 h-4 ml-1" />
-                            </Button>
+                {/* Primary Voice Message (VM) Response Stage */}
+                <div className="w-full bg-muted/40 rounded-3xl p-6 border border-border/60 flex flex-col items-center justify-center space-y-3 relative overflow-hidden">
+                    <p className="text-xs font-extrabold text-muted-foreground uppercase tracking-wider">
+                        {isRecording ? "Listening to your Voice Message..." : isProcessing ? "Evaluating Voice Message..." : "Speak Your Answer (Voice Message)"}
+                    </p>
+
+                    <div className="relative flex items-center justify-center w-36 h-36">
+                        {isRecording && [0, 1, 2].map((i) => (
+                            <motion.span 
+                                key={i} 
+                                className="absolute rounded-full bg-rose-500/20"
+                                initial={{ width: 100, height: 100, opacity: 0.8 }}
+                                animate={{ width: 170, height: 170, opacity: 0 }}
+                                transition={{ duration: 1.8, repeat: Infinity, delay: i * 0.55, ease: "easeOut" }} 
+                            />
+                        ))}
+
+                        <button
+                            type="button"
+                            disabled={isProcessing}
+                            onClick={isRecording ? stopVMRecording : startVMRecording}
+                            className={`relative w-28 h-28 rounded-full flex items-center justify-center shadow-xl transition-all disabled:opacity-80 ${
+                                isRecording 
+                                    ? "bg-rose-600 scale-105 glow-destructive text-white" 
+                                    : "gradient-bg text-white hover:scale-105 glow-primary"
+                            }`}
+                        >
+                            {isProcessing ? (
+                                <Loader2 className="w-10 h-10 text-white animate-spin" />
+                            ) : isRecording ? (
+                                <Square className="w-9 h-9 text-white" fill="white" />
+                            ) : (
+                                <Mic className="w-10 h-10 text-white" />
+                            )}
+                        </button>
+                    </div>
+
+                    <p className="text-xs font-extrabold text-center text-foreground">
+                        {isRecording ? "Tap stop when finished speaking" : isProcessing ? "Processing..." : "Tap mic to record voice answer"}
+                    </p>
+
+                    {/* Live Transcript Preview */}
+                    {isRecording && liveTranscript && (
+                        <div className="w-full bg-card border border-primary/30 rounded-2xl p-3 text-xs italic text-center font-medium text-foreground">
+                            "{liveTranscript}"
                         </div>
-                    </form>
+                    )}
+                </div>
+
+                {/* Secondary Option: Type Answer Text */}
+                <div className="w-full border-t border-border/60 pt-3">
+                    <button
+                        type="button"
+                        onClick={() => setShowTextFallback((s) => !s)}
+                        className="text-xs font-bold text-muted-foreground hover:text-foreground flex items-center gap-1.5 mx-auto"
+                    >
+                        <Keyboard className="w-3.5 h-3.5 text-primary" /> {showTextFallback ? "Hide text option" : "Or type answer as text"}
+                    </button>
+
+                    {showTextFallback && (
+                        <form onSubmit={handleAnswerSubmitText} className="mt-3 space-y-3">
+                            <Textarea 
+                                value={answerText}
+                                onChange={(e) => setAnswerText(e.target.value)}
+                                placeholder="e.g. It started 2 days ago, and I also have a rash..."
+                                rows={3}
+                                className="rounded-2xl text-sm bg-background border-border/80"
+                            />
+                            <div className="flex items-center justify-end">
+                                <Button 
+                                    type="submit" 
+                                    className="rounded-full px-5 font-bold gradient-bg text-white shadow-md text-xs h-9"
+                                >
+                                    Submit Text Clarification <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                                </Button>
+                            </div>
+                        </form>
+                    )}
+                </div>
+
+                {/* Reset Button */}
+                <div className="w-full flex justify-center pt-1 border-t border-border/40">
+                    <Button 
+                        type="button" 
+                        variant="ghost" 
+                        onClick={onReset}
+                        className="rounded-full text-xs font-bold text-muted-foreground hover:text-foreground"
+                    >
+                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Cancel & Start Over
+                    </Button>
                 </div>
             </div>
         </motion.div>
