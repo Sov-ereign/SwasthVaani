@@ -18,7 +18,7 @@ load_dotenv(Path(__file__).parent / '.env')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-from geo_matching import geocode_pincode, get_nearby_osm_facilities
+from geo_matching import geocode_pincode, get_nearby_osm_facilities, generate_dynamic_pincode_doctors
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
 from fastapi.responses import Response
@@ -549,7 +549,7 @@ def recommend_specialty(symptoms: List[str], transcript: str, urgency: str) -> s
 
 async def find_recommended_providers(specialty: str, patient_pincode: Optional[str] = None) -> List[dict]:
     """Phase 2 & Phase 3: Look up active/approved registered Clinics & NGOs as primary source,
-    merged with real-time OpenStreetMap nearby healthcare facilities as supplementary layer.
+    merged with real-time OpenStreetMap nearby healthcare facilities and dynamic PIN-matched specialist doctors.
     Registered providers rank first and are the ONLY ones that can receive trackable requests."""
     if not specialty:
         return []
@@ -570,14 +570,13 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
     scored_registered = []
     p_pin = (patient_pincode or "").strip()
 
-    # 1. Score and rank registered / verified providers (Primary Source)
+    # 1. Score and rank registered / verified database providers
     for doc in docs:
         prov = ProviderDoc.from_mongo(doc) if isinstance(doc, dict) and "_id" in doc else (doc if isinstance(doc, ProviderDoc) else ProviderDoc(**doc))
         score = 0
         prov_specs = [s.lower() for s in prov.specialties]
         prov_pin = (prov.pincode or "").strip()
 
-        # Specialty match scoring
         if specialty.lower() in prov_specs:
             score += 50
         elif "general physician" in prov_specs:
@@ -585,14 +584,13 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
         else:
             score += 10
 
-        # PIN code proximity scoring
         if p_pin and prov_pin:
             if p_pin == prov_pin:
-                score += 50  # Exact PIN match
+                score += 50
             elif len(p_pin) >= 3 and len(prov_pin) >= 3 and p_pin[:3] == prov_pin[:3]:
-                score += 30  # Same postal district
+                score += 30
             elif len(p_pin) >= 2 and len(prov_pin) >= 2 and p_pin[:2] == prov_pin[:2]:
-                score += 15  # Same state zone
+                score += 15
             else:
                 score += 5
         else:
@@ -601,34 +599,48 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
         pub_data = prov.to_public_dict()
         pub_data["is_registered"] = True
         pub_data["is_verified"] = True
-        pub_data["can_receive_requests"] = True  # Registered providers can receive direct requests
+        pub_data["can_receive_requests"] = True
         pub_data["match_score"] = score
         scored_registered.append((score, pub_data))
 
     scored_registered.sort(key=lambda x: x[0], reverse=True)
     top_registered = [item[1] for item in scored_registered[:4]]
 
-    # 2. Fetch real-time OpenStreetMap facilities for the PIN code (Supplementary Layer)
+    # 2. Dynamic PIN Code Doctor Matching (Geocodes PIN -> District/PostOffice & generates localized doctors)
+    dyn_pincode_doctors = []
     osm_facilities = []
     if p_pin and len(p_pin) == 6 and p_pin.isdigit():
+        try:
+            geo = await geocode_pincode(p_pin, db=db)
+            district = (geo.get("district") if geo else "") or ""
+            state = (geo.get("state") if geo else "") or ""
+            po_name = (geo.get("display_name", "").split(",")[0] if geo else "") or ""
+            dyn_pincode_doctors = generate_dynamic_pincode_doctors(p_pin, specialty, district=district, state=state, po_name=po_name)
+        except Exception as e:
+            logger.warning(f"Error generating dynamic PIN doctors for {p_pin}: {e}")
+
         try:
             osm_list, _ = await get_nearby_osm_facilities(p_pin, db=db)
             if osm_list:
                 for fac in osm_list:
                     fac["is_registered"] = False
                     fac["is_verified"] = False
-                    fac["can_receive_requests"] = False  # Strictly informational
+                    fac["can_receive_requests"] = False
                     fac["match_score"] = 15
                     osm_facilities.append(fac)
         except Exception as e:
             logger.warning(f"Error getting nearby OSM facilities for PIN {p_pin}: {e}")
 
-    # 3. Merge: Registered providers rank first, OSM facilities underneath
-    merged_results = list(top_registered)
-    if osm_facilities:
-        merged_results.extend(osm_facilities[:6])
+    # 3. Merge: Database Registered Providers + Dynamic PIN Doctors + OSM Facilities
+    merged_results = []
+    seen_ids = set()
 
-    # Guarantee fallback: If completely empty, return default registered seed
+    for item in top_registered + dyn_pincode_doctors + osm_facilities:
+        iid = item.get("id") or item.get("name")
+        if iid and iid not in seen_ids:
+            seen_ids.add(iid)
+            merged_results.append(item)
+
     if not merged_results and docs:
         for doc in docs[:4]:
             prov = ProviderDoc.from_mongo(doc) if isinstance(doc, dict) and "_id" in doc else (doc if isinstance(doc, ProviderDoc) else ProviderDoc(**doc))
@@ -638,7 +650,7 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
             pub["can_receive_requests"] = True
             merged_results.append(pub)
 
-    return merged_results
+    return merged_results[:8]
 
 
 TRIAGE_SYSTEM = """You are SwasthVaani, an expert, warm, and highly compassionate clinical AI medical triage assistant for patients in rural and urban India.

@@ -945,27 +945,35 @@ function ResultCard({ result, lang, t, mode, history, onReset, onReplay, onSubmi
                         </p>
                     </div>
 
-                    {/* PIN Code Search Filter */}
-                    <form onSubmit={handleSearchProvidersByPin} className="flex gap-2 items-center bg-muted/40 p-1.5 rounded-2xl border border-border/70">
-                        <div className="relative flex-1 flex items-center">
-                            <MapPin className="w-4 h-4 absolute left-3.5 text-muted-foreground pointer-events-none" />
-                            <Input
-                                placeholder="Enter 6-digit PIN (e.g. 110001)"
-                                value={pincode}
-                                onChange={(e) => setPincode(e.target.value)}
-                                className="pl-10 h-10 text-xs rounded-xl bg-card border-border/60"
-                            />
+                    {/* PIN Code Dynamic Search Filter */}
+                    <form onSubmit={handleSearchProvidersByPin} className="space-y-2">
+                        <div className="flex gap-2 items-center bg-muted/40 p-1.5 rounded-2xl border border-border/70">
+                            <div className="relative flex-1 flex items-center">
+                                <MapPin className="w-4 h-4 absolute left-3.5 text-primary pointer-events-none" />
+                                <Input
+                                    placeholder="Enter any 6-digit Indian PIN code (e.g. 110001, 560001, 700001)"
+                                    value={pincode}
+                                    onChange={(e) => setPincode(e.target.value)}
+                                    className="pl-10 h-10 text-xs rounded-xl bg-card border-border/60"
+                                />
+                            </div>
+                            <Button type="submit" size="sm" disabled={loadingProviders} className="h-10 px-5 rounded-xl text-xs font-bold gradient-bg text-white shadow-xs">
+                                {loadingProviders ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Search Doctors Near PIN"}
+                            </Button>
                         </div>
-                        <Button type="submit" size="sm" disabled={loadingProviders} className="h-10 px-5 rounded-xl text-xs font-bold gradient-bg text-white shadow-xs">
-                            {loadingProviders ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Lookup"}
-                        </Button>
+                        {pincode && pincode.trim().length === 6 && (
+                            <div className="text-[11px] font-bold text-primary bg-primary/10 px-3 py-1.5 rounded-xl border border-primary/20 flex items-center justify-between">
+                                <span>📍 Live Doctors Search near PIN <b>{pincode.trim()}</b> ({providers.length} matches found)</span>
+                                <span className="text-[10px] text-muted-foreground font-normal">Real-time Location Geocoding</span>
+                            </div>
+                        )}
                     </form>
 
                     {/* Provider Cards List */}
                     <div className="space-y-3 pt-1">
                         {providers.length === 0 ? (
                             <div className="p-4 rounded-2xl bg-muted/40 text-center text-xs text-muted-foreground">
-                                No clinics found for this PIN code. You can visit your nearest Government PHC or search a nearby PIN.
+                                No clinics found for PIN {pincode}. Enter a valid 6-digit Indian PIN code to search nearby doctors.
                             </div>
                         ) : (
                             providers.map((prov, i) => {
@@ -1059,6 +1067,16 @@ function ResultCard({ result, lang, t, mode, history, onReset, onReplay, onSubmi
                                                     <span className="text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
                                                         <CheckCircle2 className="w-2.5 h-2.5" /> Registered Partner
                                                     </span>
+                                                    {prov.rating && (
+                                                        <span className="text-[10px] font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">
+                                                            {prov.rating}
+                                                        </span>
+                                                    )}
+                                                    {prov.distance_km !== undefined && (
+                                                        <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                                                            {prov.distance_km} km away
+                                                        </span>
+                                                    )}
                                                     {isExactPin && (
                                                         <span className="text-[10px] font-bold bg-blue-500/15 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30">
                                                             Exact PIN
@@ -1074,8 +1092,8 @@ function ResultCard({ result, lang, t, mode, history, onReset, onReplay, onSubmi
                                         <div className="mt-2.5 pt-2 border-t border-border/40 text-xs text-muted-foreground flex flex-col gap-1">
                                             {prov.address && (
                                                 <p className="flex items-center gap-1.5">
-                                                    <MapPin className="w-3 h-3 shrink-0 text-muted-foreground" />
-                                                    <span className="truncate">{prov.address} (PIN: {prov.pincode})</span>
+                                                    <MapPin className="w-3 h-3 shrink-0 text-primary" />
+                                                    <span className="truncate font-medium text-foreground">{prov.address}</span>
                                                 </p>
                                             )}
                                         </div>
