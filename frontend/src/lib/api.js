@@ -31,6 +31,8 @@ export const SPECIALTY_LIST = [
     "Pulmonologist",
     "Ophthalmologist",
     "Psychiatrist",
+    "Nephrologist",
+    "Urologist",
 ];
 
 export const URGENCY_META = {

@@ -60,7 +60,7 @@ except ImportError:
     HAS_OLLAMA = False
 
 try:
-    from groq import Groq
+    from groq import AsyncGroq, Groq
     HAS_GROQ = True
 except ImportError:
     HAS_GROQ = False
@@ -156,7 +156,9 @@ SPECIALTY_LIST = [
     "Gastroenterologist",
     "Pulmonologist",
     "Ophthalmologist",
-    "Psychiatrist"
+    "Psychiatrist",
+    "Nephrologist",
+    "Urologist"
 ]
 
 _whisper_model_obj = None
@@ -253,19 +255,20 @@ def check_red_flags(transcript: str) -> list:
 
 
 def extract_symptoms(transcript: str) -> list:
-    """Phase 2 NLP stage — minimal keyword-based symptom extraction.
-    Returns a list of symptom strings found in the transcript.
-    This runs independently and can be replaced by a proper NLP model."""
+    """Phase 2 NLP stage — symptom extraction.
+    Returns a list of symptom strings found in the transcript."""
     symptom_keywords = [
         "fever", "pain", "cough", "cold", "headache", "head pain", "vomiting", "diarrhea",
         "rash", "swelling", "fatigue", "dizziness", "nausea", "bleeding",
         "breathing", "chest", "throat", "ear", "eye", "stomach", "back",
+        "kidney", "renal", "flank", "urinary", "urine", "bladder", "stone", "infection",
         # Hindi
         "बुखार", "दर्द", "खांसी", "सिरदर्द", "सिर दर्द", "सिर भारी", "उल्टी", "कफ", "सूजन", "चक्कर",
+        "किडनी", "गुर्दे", "पेट", "कमर", "पेशाब", "जलन", "सांस", "छाती", "गला", "आंख", "कान",
         # Tamil
-        "காய்ச்சல்", "வலி", "இருமல்", "தலைவலி",
+        "காய்ச்சல்", "வலி", "இருமல்", "தலைவலி", "சிறுநீரகம்", "சிறுநீர்", "வாந்தி", "வயிற்று வலி",
         # Bengali
-        "জ্বর", "ব্যথা", "কাশি", "মাথা ব্যথা", "বমি",
+        "জ্বর", "ব্যথা", "কাশি", "মাথা ব্যথা", "বমি", "কিডনি", "বৃক্ক", "প্রস্রাব", "পেট ব্যথা",
     ]
     lower = transcript.lower()
     return [kw for kw in symptom_keywords if kw.lower() in lower]
@@ -471,49 +474,63 @@ def recommend_specialty(symptoms: List[str], transcript: str, urgency: str) -> s
     t = transcript.lower()
     syms = [s.lower() for s in (symptoms or [])]
     all_text = t + " " + " ".join(syms)
+    import re
 
-    # 1. Cardiology (heart / chest / palpitation / bp)
-    if any(k in all_text for k in ["chest", "chest pain", "heart", "सीने में दर्द", "धड़कन", "बुके ব্যথা", "மார்பு வலி", "cardiac", "blood pressure", "palpitation", "breathless"]):
+    def match_words(patterns, text):
+        for p in patterns:
+            if p.isascii() and len(p) <= 4:
+                if re.search(r'\b' + re.escape(p) + r'\b', text):
+                    return True
+            else:
+                if p in text:
+                    return True
+        return False
+
+    # 1. Nephrology / Urology (kidney / renal / flank / urinary / bladder / stone)
+    if match_words(["kidney", "renal", "flank", "urine", "urinary", "bladder", "stone", "किडनी", "गुर्दे", "पेशाब", "मूत्र", "पथरी", "বৃক্ক", "কিডনি", "சிறுநீரகம்"], all_text):
+        return "Nephrologist"
+
+    # 2. Cardiology (heart / chest / palpitation / bp)
+    if match_words(["chest", "chest pain", "heart", "सीने में दर्द", "धड़कन", "বুকে ব্যথা", "மார்பு வலி", "cardiac", "blood pressure", "palpitation", "breathless"], all_text):
         return "Cardiologist"
 
-    # 2. Neurology (headache / stroke / seizure / dizziness / fainting / unconscious)
-    if any(k in all_text for k in ["headache", "head pain", "सिरदर्द", "सिर दर्द", "चक्कर", "दौरा", "seizure", "stroke", "paralysis", "dizzy", "dizziness", "মাথা ব্যথা", "தலைவலி", "fainting", "unconscious", "बेहोश", "vision"]):
+    # 3. Neurology (headache / stroke / seizure / dizziness / fainting / unconscious)
+    if match_words(["headache", "head pain", "सिरदर्द", "सिर दर्द", "चक्कर", "दौरा", "seizure", "stroke", "paralysis", "dizzy", "dizziness", "মাথা ব্যথা", "தலைவலி", "fainting", "unconscious", "बेहोश", "vision"], all_text):
         return "Neurologist"
 
-    # 3. Dermatology (skin / rash / itch / allergy / boil)
-    if any(k in all_text for k in ["rash", "skin", "itch", "itching", "खुजली", "चकत्ते", "allergy", "boil", "blister", "skin peeling", "चर्म रोग"]):
+    # 4. Dermatology (skin / rash / itch / allergy / boil)
+    if match_words(["rash", "skin", "itch", "itching", "खुजली", "चकत्ते", "allergy", "boil", "blister", "skin peeling", "चर्म रोग"], all_text):
         return "Dermatologist"
 
-    # 4. Pediatrician (child / baby / infant / toddler / kid)
-    if any(k in all_text for k in ["child", "baby", "infant", "kid", "बच्चा", "बच्चे", "বাচ্চা", "குழந்தை", "pediatric", "immunization"]):
+    # 5. Pediatrician (child / baby / infant / toddler / kid)
+    if match_words(["child", "children", "baby", "infant", "toddler", "kid", "kids", "बच्चा", "बच्चे", "বাচ্চা", "குழந்தை", "pediatric", "immunization"], all_text):
         return "Pediatrician"
 
-    # 5. Orthopedic (bone / joint / fracture / back / knee / spine / sprain)
-    if any(k in all_text for k in ["bone", "joint", "fracture", "back", "knee", "spine", "कमर दर्द", "जोड़ों का दर्द", "हड्डी", "পিঠের ব্যথা", "மூட்டு வலி", "sprain", "swelling in leg", "ankle"]):
+    # 6. Orthopedic (bone / joint / fracture / back / knee / spine / sprain)
+    if match_words(["bone", "joint", "fracture", "back", "knee", "spine", "कमर दर्द", "जोड़ों का दर्द", "हड्डी", "পিঠের ব্যথা", "மூட்டு வலி", "sprain", "swelling in leg", "ankle"], all_text):
         return "Orthopedic"
 
-    # 6. ENT (ear / nose / throat / sinus / cold / vocal / cough)
-    if any(k in all_text for k in ["ear", "throat", "sinus", "nose", "कान", "गला", "गले में दर्द", "नाक", "কাশি", "কান", "தொண்டை வலி", "voice", "sore throat", "tonsil"]):
+    # 7. ENT (ear / nose / throat / sinus / cold / vocal / cough)
+    if match_words(["ear", "throat", "sinus", "nose", "कान", "गला", "गले में दर्द", "नाक", "কাশি", "কান", "தொண்டை வலி", "voice", "sore throat", "tonsil"], all_text):
         return "ENT"
 
-    # 7. Gynecologist (pregnancy / period / menstrual / women)
-    if any(k in all_text for k in ["pregnant", "pregnancy", "period", "menstrual", "गर्भवती", "पीरियड", "গর্ভবতী", "கர்ப்பம்", "maternity"]):
+    # 8. Gynecologist (pregnancy / period / menstrual / women)
+    if match_words(["pregnant", "pregnancy", "period", "menstrual", "गर्भवती", "पीरियड", "গর্ভবতী", "கர்ப்பம்", "maternity"], all_text):
         return "Gynecologist"
 
-    # 8. Gastroenterology / Digestive
-    if any(k in all_text for k in ["stomach", "vomiting", "diarrhea", "loose motion", "पेट दर्द", "उल्टी", "दस्त", "বমি", "পেট ব্যথা", "acidity", "gastric"]):
-        return "General Physician"
-
     # 9. Pulmonology (respiratory / asthma / lung)
-    if any(k in all_text for k in ["breathing", "breath", "asthma", "सांस", "lung", "শ্বাসকষ্ট"]):
+    if match_words(["breathing", "breath", "asthma", "सांस", "lung", "শ্বাসকষ্ট"], all_text):
         return "Pulmonologist"
 
     # 10. Ophthalmology (eye)
-    if any(k in all_text for k in ["eye", "vision", "आंख", "চোখ", "கண்"]):
+    if match_words(["eye", "eyes", "vision", "आंख", "চোখ", "கண்"], all_text):
         return "Ophthalmologist"
 
-    return "General Physician"
+    # 11. Gastroenterology / Digestive
+    if match_words(["stomach", "vomiting", "diarrhea", "loose motion", "पेट दर्द", "उल्टी", "दस्त", "বমি", "পেট ব্যথা", "acidity", "gastric"], all_text):
+        return "General Physician"
 
+    return "General Physician"
 
 async def find_recommended_providers(specialty: str, patient_pincode: Optional[str] = None) -> List[dict]:
     """Look up active/approved Clinics & NGOs matching specialty and PIN code.
@@ -574,24 +591,44 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
     return [item[1] for item in scored[:6]]
 
 
-TRIAGE_SYSTEM = """You are SwasthVaani, an AI medical triage assistant for rural, low-literacy patients in India.
-A patient has described their symptoms by voice. Your job is to assess urgency and give simple, calm, practical guidance.
+TRIAGE_SYSTEM = """You are SwasthVaani, an expert clinical AI medical triage assistant for patients in India.
+A patient has described their symptoms in natural language or voice.
+Your task is to analyze the medical situation based on sound clinical judgment, duration, organ involvement, and severity, then provide structured guidance.
 
 You MUST respond with ONLY a valid JSON object (no markdown, no extra text) with these exact keys:
 {
   "urgency": one of "emergency" | "soon" | "home",
-  "summary": short English summary of symptoms for the clinic dashboard (max 12 words),
-  "advice": clear next-steps advice in ENGLISH for clinic records (2-3 short sentences),
-  "spoken": the SAME advice written in the patient's language ({lang_name}), warm, empathetic, simple, spoken aloud to the patient. Start by restating what you understood, state the urgency level gently in their language, then give 2-3 simple home or care steps. Keep under 90 words.
+  "summary": concise clinical summary of reported symptoms in English for the clinic record (max 12 words),
+  "advice": clear, actionable next-steps guidance in English for clinic records (2-3 concise sentences),
+  "spoken": the EXACT advice translated and adapted into the patient's language ({lang_name}), warm, empathetic, simple, spoken clearly to the patient. Start by acknowledging their symptoms, explain the urgency level calmly in their language, and give 2-3 clear care or action steps. Keep under 90 words.
 }
 
-Urgency rules — apply these strictly and realistically:
-- "emergency": ONLY for life-threatening situations: chest pain, severe difficulty breathing, severe uncontrolled bleeding, unconsciousness, stroke signs (sudden facial drooping/arm weakness/slurred speech), severe burns, poisoning, seizures, high fever WITH confusion or stiff neck, obstetric emergencies. Tell patient to go to hospital NOW.
-- "soon": Symptoms that need a doctor within 1–2 days but are NOT immediately life-threatening. Examples: fever lasting more than 2–3 days, persistent high fever (>102°F), moderate ear/throat infection, persistent vomiting preventing fluid intake, significant worsening pain over days, urinary symptoms, a wound that may need stitches.
-- "home": Routine, mild, isolated, self-limiting symptoms. Examples: a simple headache, mild cold, runny nose, minor sore throat, slight cough without breathing difficulty, tiredness, mild stomach upset, a small cut or bruise. Reassure the patient, advise rest, fluids, and simple home remedies. DO NOT alarm the patient or tell them to rush to emergency hospital. Mention calmly when to see a health worker if symptoms persist.
+Clinical Urgency Classification Rules:
+1. "emergency" (Immediate emergency hospital care required NOW):
+   - Life-threatening or acute severe emergencies:
+   - Cardiac/Chest: Chest pain, pressure, tightness, sudden breathlessness, heart attack symptoms.
+   - Neurological: Unconsciousness, fainting, stroke signs (facial droop, arm weakness, speech slurring), seizures/convulsions.
+   - Severe trauma/Bleeding: Severe uncontrolled bleeding, severe burns, head injury with vomiting/confusion.
+   - Toxic/Overdose: Poisoning, snake bite, chemical exposure, drug overdose.
+   - Acute severe organ crisis: Unbearable sudden severe abdominal or flank/kidney pain with vomiting, high fever with stiff neck/delirium.
+   - Tell patient to go to the nearest emergency hospital immediately.
 
-Bias toward "home" for isolated mild symptoms (such as headache, cold, fatigue). Bias toward "soon" only if symptoms are persistent (>2 days), worsening, or moderately severe. Reserve "emergency" for genuinely life-threatening signs.
-Never give specific drug prescriptions. Encourage seeing a health worker if things don't improve."""
+2. "soon" (Requires outpatient doctor / clinic consultation within 24–48 hours):
+   - Persistent fever: Fever lasting 3 or more days (including 3, 4, 5, 6, 7+ days or a week), high fever > 102°F / 39°C.
+   - Organ-specific / Internal pain: Kidney pain, flank pain, severe back pain, urinary pain / burning with urination / blood in urine, moderate-to-severe abdominal cramps.
+   - Persistent gastrointestinal: Vomiting or diarrhea persisting over 24-48 hours with dehydration risk.
+   - Infections & Wounds: Moderate-to-severe ear/throat infection, deep cuts that may need suturing, spreading rashes.
+   - Symptoms progressively worsening rather than improving over days.
+   - Advise consulting a doctor at the nearest primary health center (PHC) or clinic within 1-2 days.
+
+3. "home" (Mild, self-limiting symptoms safe for supportive home care):
+   - Routine, brief (< 48 hours), isolated mild complaints: mild headache, minor common cold, slight runny nose, mild scratch, transient tiredness, mild sore throat without breathing difficulty.
+   - Advise rest, plenty of clean fluids/electrolytes, nutritious food, and monitoring.
+   - Reassure calmly and specify that if symptoms worsen or persist beyond 2–3 days, they should visit a healthcare professional.
+
+Important:
+- NEVER classify prolonged fever (>= 3 days) or organ-specific pain (like kidney, urinary, or severe abdominal pain) as 'home' care.
+- Do NOT prescribe specific prescription drugs or dosages. Always recommend consulting a certified doctor."""
 
 
 async def run_triage(
@@ -683,20 +720,18 @@ async def run_triage(
 
     async def _try_groq():
         if HAS_GROQ and g_key:
-            g_client = Groq(api_key=g_key)
-            completion = g_client.chat.completions.create(
+            client_groq = AsyncGroq(api_key=g_key, timeout=12.0)
+            completion = await client_groq.chat.completions.create(
                 model=os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
                 messages=[
                     {"role": "system", "content": TRIAGE_SYSTEM.replace("{lang_name}", lang["name"])},
                     {"role": "user", "content": f"Patient symptoms (in {lang['name']}): {safe_transcript}"}
                 ],
-                temperature=0.2,
-                max_tokens=300,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                max_tokens=400,
             )
             raw = completion.choices[0].message.content.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                raw = raw[raw.find("{"):]
             logger.info("Successfully triaged via Groq Llama 3.3")
             return json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
         return None
@@ -746,13 +781,13 @@ async def run_triage(
         return None
 
     if llm_prov == "ollama":
-        providers = [_try_ollama, _try_groq, _try_emergent]
+        providers = [("ollama_nemotron", _try_ollama), ("groq_llama3.3", _try_groq), ("emergent_gpt4o", _try_emergent)]
     elif llm_prov == "emergent":
-        providers = [_try_emergent, _try_groq, _try_ollama]
+        providers = [("emergent_gpt4o", _try_emergent), ("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama)]
     else:  # 'groq' or 'auto'
-        providers = [_try_groq, _try_ollama, _try_emergent]
+        providers = [("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama), ("emergent_gpt4o", _try_emergent)]
 
-    for prov_name, prov_fn in [("groq_llama3.3", _try_groq), ("ollama_nemotron", _try_ollama), ("emergent_gpt4o", _try_emergent)]:
+    for prov_name, prov_fn in providers:
         try:
             res = await prov_fn()
             if res and isinstance(res, dict) and "urgency" in res:
@@ -762,7 +797,7 @@ async def run_triage(
         except Exception as e:
             logger.warning(f"LLM provider '{prov_name}' failed: {e}")
 
-    # 4. Rule-based safety engine fallback (supporting English, Hindi, Bengali, Tamil)
+    # 4. Clinically-grounded safety engine fallback (supporting English, Hindi, Bengali, Tamil)
     if not data:
         lower_t = transcript.lower()
         import re
@@ -770,24 +805,48 @@ async def run_triage(
         emergency_triggers = [
             "chest pain", "difficulty breathing", "can't breathe", "cannot breathe",
             "shortness of breath", "severe bleeding", "unconscious", "stroke",
-            "heart attack", "seizure", "convuls", "overdose", "poison",
-            "सीने में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "बेहोश", "अत्यधिक खून", "दौरा",
-            "বুকে ব্যথা", "শ্বাসকষ্ট", "প্রচুর রক্তপাত", "অজ্ঞান",
-            "மார்பு வலி", "மூச்சுத் திணறல்", "அதிக ரத்தப்போக்கு"
+            "heart attack", "seizure", "convuls", "overdose", "poison", "snake bite",
+            "सीने में दर्द", "छाती में दर्द", "सांस नहीं", "सांस लेने में तकलीफ", "सांस फूल", "बेहोश", "होश नहीं",
+            "अत्यधिक खून", "खून बह", "दौरा",
+            "বুকে ব্যথা", "শ্বাসকষ্ট", "প্রচুর রক্তপাত", "জ্ঞান হারিয়ে", "অজ্ঞান",
+            "மார்பு வலி", "மூச்சுத் திணறல்", "அதிக ரத்தப்போக்கு", "மயக்கம்"
         ]
 
-        soon_triggers = [
-            "fever for 3 days", "fever for 2 days", "persistent fever", "high fever",
-            "vomiting", "diarrhea", "severe pain", "worsening pain", "infection",
-            "बुखार", "उल्टी", "दस्त", "तेज बुखार", "ज्वर", "বমি", "காய்ச்சல்"
+        # Clinical detection of prolonged fever (>= 3 days or weeks or din)
+        has_prolonged_fever = False
+        fever_duration_regex = r'(?:fever|temperature|बुखार|ज्वर|জ্বর|காய்ச்சல்).*(?:[3-9]|\d{2,}|three|four|five|six|seven|eight|nine|ten|several|week|days|din|दिन|দিন|நாட்கள்)|(?:[3-9]|\d{2,}|three|four|five|six|seven|eight|nine|ten|several|week|days|din|दिन|দিন|நாட்கள்).*(?:fever|temperature|बुखार|ज्वर|জ্বর|காய்ச்சல்)'
+        if re.search(fever_duration_regex, lower_t):
+            has_prolonged_fever = True
+
+        # Clinical detection of kidney / renal / flank / urinary symptoms
+        kidney_triggers = [
+            "kidney", "renal", "flank", "urine", "urinary", "bladder", "stone",
+            "किडनी", "गुर्दे", "पेशाब", "मूत्र", "पथरी",
+            "কিডনি", "বৃক্ক", "প্রস্রাব",
+            "சிறுநீரகம்", "சிறுநீர்"
         ]
+        has_kidney_symptom = any(k in lower_t for k in kidney_triggers)
+
+        # General moderate-to-high clinical triggers for doctor consultation
+        soon_triggers = [
+            "fever", "vomiting", "diarrhea", "severe pain", "worsening pain", "infection",
+            "stomach pain", "abdomen", "abdominal pain", "ear pain", "throat infection",
+            "बुखार", "उल्टी", "दस्त", "तेज बुखार", "पेट दर्द", "दर्द", "गले में दर्द",
+            "জ্বর", "বমি", "পেট ব্যথা", "পাতলা পায়খানা",
+            "காய்ச்சல்", "வாந்தி", "வயிற்று வலி", "வயிற்றுப்போக்கு"
+        ]
+
+        severe_pain_modifiers = ["severe", "unbearable", "intense", "sharp", "acute", "तेज", "असह्य", "तीव्र", "অসহ্য", "தீவிர"]
+        is_severe_pain = any(m in lower_t for m in severe_pain_modifiers) and any(p in lower_t for p in ["pain", "ache", "दर्द", "ব্যথা", "வலி"])
 
         headache_terms = [
-            "headache", "head pain", "head ache", "सिरदर्द", "सिर दर्द", "सिर भारी",
-            "தலைவலி", "மாথা ব্যথা"
+            "headache", "head pain", "सिरदर्द", "सिर दर्द", "सिर भारी", "தலைவலி", "மாথা ব্যথা"
+        ]
+        mild_cold_terms = [
+            "mild cold", "runny nose", "sneezing", "light cough", "हल्की सर्दी", "जुकाम", "छींक"
         ]
 
-        if any(k in lower_t for k in emergency_triggers):
+        if any(k in lower_t for k in emergency_triggers) or (is_severe_pain and any(k in lower_t for k in ["chest", "head", "breath", "सीना", "छाती"])):
             urgency = "emergency"
             summary = "Emergency red-flag symptoms reported"
             advice = "Please go to the nearest emergency hospital or healthcare center immediately for urgent medical care."
@@ -795,7 +854,23 @@ async def run_triage(
             spoken_bn = "আপনার মারাত্মক জরুরি লক্ষণ রয়েছে। অবিলম্বে নিকটস্থ জরুরি হাসপাতালে যান।"
             spoken_en = "Severe emergency symptoms detected. Please seek emergency medical care at the nearest hospital immediately."
             spoken_ta = "கடுமையான அவசர அறிகுறிகள். உடனடியாக அருகிலுள்ள மருத்துவமனைக்கு செல்லவும்."
-        elif any(k in lower_t for k in soon_triggers) and not any(k in lower_t for k in headache_terms):
+        elif has_prolonged_fever:
+            urgency = "soon"
+            summary = "Persistent fever reported (>3 days)"
+            advice = "Fever lasting multiple days requires clinical evaluation and blood testing. Visit a doctor or primary health center within 24–48 hours."
+            spoken_hi = "कई दिनों से बुखार रहना चिंताजनक हो सकता है। कृपया अगले 1-2 दिनों में डॉक्टर से मिलकर जांच करवाएं और पर्याप्त पानी पिएं।"
+            spoken_bn = "বেশ কয়েকদিন ধরে জ্বর থাকা ডাক্তার দেখানো প্রয়োজন। ১-২ দিনের মধ্যে চিকিৎসকের পরামর্শ নিন এবং প্রচুর জল পান করুন।"
+            spoken_en = "A fever lasting multiple days requires medical evaluation. Please see a healthcare provider within 1 to 2 days."
+            spoken_ta = "பல நாட்களாக காய்ச்சல் நீடிப்பதால் 1-2 நாட்களுக்குள் மருத்துவரை அணுகி ரத்த பரிசோதனை செய்து கொள்ளவும்."
+        elif has_kidney_symptom:
+            urgency = "soon"
+            summary = "Kidney / urinary tract symptoms reported"
+            advice = "Kidney or urinary symptoms should be evaluated by a healthcare professional to rule out infection or stones. Drink plenty of water and see a doctor soon."
+            spoken_hi = "किडनी या पेशाब से जुड़े लक्षणों के लिए डॉक्टर से जांच करवाना जरूरी है। खूब पानी पिएं और जल्द से जल्द स्वास्थ्य केंद्र जाएँ।"
+            spoken_bn = "কিডনি বা প্রস্রাবের সমস্যার জন্য ডাক্তারের পরামর্শ নেওয়া প্রয়োজন। পর্যাপ্ত জল পান করুন এবং শীঘ্রই চিকিৎসকের কাছে যান।"
+            spoken_en = "Kidney or urinary discomfort should be examined by a physician. Stay hydrated and visit a healthcare center soon."
+            spoken_ta = "சிறுநீரகம் அல்லது சிறுநீர் சார்ந்த பிரச்சனைகளுக்கு உடனடியாக மருத்துவரை அணுகவும். அதிக தண்ணீர் குடிக்கவும்."
+        elif (any(k in lower_t for k in soon_triggers) or is_severe_pain) and not (any(k in lower_t for k in headache_terms) and not is_severe_pain and len(lower_t.split()) <= 6) and not any(k in lower_t for k in mild_cold_terms):
             urgency = "soon"
             summary = "Persistent / moderate symptoms reported"
             advice = "Visit a primary healthcare center or doctor within 1 to 2 days for examination."
@@ -817,7 +892,7 @@ async def run_triage(
                 summary = "Mild symptoms reported"
                 advice = "Rest well at home, drink clean fluids, and monitor symptoms. Consult a health worker if your condition worsens."
                 spoken_hi = "घर पर आराम करें और पर्याप्त पानी पिएं। यदि लक्षण बिगड़ते हैं, तो डॉक्टर या स्वास्थ्य कार्यकर्ता से मिलें।"
-                spoken_bn = "বাড়িতে বিশ্রাম নিন এবং পর্যাপ্ত জল পান করুন। লক্ষণগুলি খারাপ হলে ডাক্তারের সাথে পরামর্শ করুন।"
+                spoken_bn = "বাড়িতে বিশ্রাম নিন এবং পর্যাপ্ত জল পান করুন। লক্ষণগুলি खराब হলে ডাক্তারের সাথে परामर्श করুন।"
                 spoken_en = "Rest well at home and drink clean water. Contact a health worker if symptoms get worse."
                 spoken_ta = "வீட்டில் ஓய்வெடுத்து திரவங்களை அருந்தவும். அறிகுறிகள் மோசமடைந்தால் மருத்துவரை அணுகவும்."
 
@@ -827,9 +902,8 @@ async def run_triage(
             "summary": summary,
             "advice": advice,
             "spoken": spoken_map.get(language, spoken_en),
-            "confidence": 0.7,
+            "confidence": 0.75,
         }
-
 
     if data:
         disc_map = {
