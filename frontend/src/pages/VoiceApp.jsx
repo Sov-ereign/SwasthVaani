@@ -760,12 +760,12 @@ function ResultCard({ result, lang, t, mode, history, onReset, onReplay, onSubmi
 
     const handleSearchProvidersByPin = async (e) => {
         if (e) e.preventDefault();
-        if (!result.suggested_specialty) return;
+        const spec = result.suggested_specialty || "General Physician";
         setLoadingProviders(true);
         try {
             const { data } = await api.get("/providers/recommend", {
                 params: {
-                    specialty: result.suggested_specialty,
+                    specialty: spec,
                     pincode: pincode.trim()
                 }
             });

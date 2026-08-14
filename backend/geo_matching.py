@@ -1,8 +1,8 @@
 """
 SwasthVaani — Real-time PIN Code Geocoding & OpenStreetMap Facility Matching Engine
 Handles:
-1. PIN code -> District/State (postalpincode.in) -> Coordinates (Nominatim)
-2. OpenStreetMap Facility Lookup (Nominatim Healthcare & Overpass)
+1. PIN code -> District/State (postalpincode.in + Nominatim Postalcode fallback) -> Coordinates
+2. OpenStreetMap Facility Lookup (Nominatim Healthcare, Overpass, and Specialty-specific)
 3. Caching layer (in-memory & Mongo) with TTL (48 hours)
 4. Strict separation: Registered providers vs Informational OSM facilities
 5. Resilient fallback chain (Live OSM -> Cached OSM -> Seed Provider Guarantee)
@@ -17,7 +17,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Compliant descriptive User-Agent for Nominatim & Overpass usage policies
+# Compliant descriptive User-Agent for Nominatim usage policies
 USER_AGENT = "SwasthVaani-Healthcare-Triage/1.0 (contact: info@swasthvaani.health)"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 POSTAL_PINCODE_URL = "https://api.postalpincode.in/pincode"
@@ -88,9 +88,12 @@ async def geocode_pincode(pincode: str, db=None) -> Optional[dict]:
 
     district = ""
     state = ""
+    po_name = ""
     display_name = ""
+    lat = None
+    lon = None
 
-    # 1. Resolve PIN to District & State via postalpincode.in
+    # 1. First attempt: Resolve PIN to District & State via postalpincode.in
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{POSTAL_PINCODE_URL}/{pin}", headers={"User-Agent": USER_AGENT})
@@ -106,34 +109,48 @@ async def geocode_pincode(pincode: str, db=None) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"postalpincode.in query failed for PIN {pin}: {e}")
 
-    # 2. Geocode with Nominatim (District + State + India is much more reliable in rural OSM)
-    lat = None
-    lon = None
-    query_str = f"{district}, {state}, India" if (district and state) else f"{pin}, India"
-
+    # 2. Geocode with Nominatim
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=3.5) as client:
             headers = {"User-Agent": USER_AGENT}
-            params = {"q": query_str, "format": "json", "limit": 1, "countrycodes": "in"}
-            resp = await client.get(NOMINATIM_URL, params=params, headers=headers)
-            if resp.status_code == 200:
-                results = resp.json()
-                if results and len(results) > 0:
-                    lat = float(results[0]["lat"])
-                    lon = float(results[0]["lon"])
-                    if not display_name:
-                        display_name = results[0].get("display_name", f"PIN {pin}")
+
+            # If district and state are resolved, search for District + State
+            if district and state:
+                query_str = f"{district}, {state}, India"
+                params = {"q": query_str, "format": "json", "limit": 1, "countrycodes": "in"}
+                resp = await client.get(NOMINATIM_URL, params=params, headers=headers)
+                if resp.status_code == 200:
+                    results = resp.json()
+                    if results and len(results) > 0:
+                        lat = float(results[0]["lat"])
+                        lon = float(results[0]["lon"])
+
+            # If not yet found, use direct postalcode search
+            if lat is None or lon is None:
+                params = {"postalcode": pin, "country": "India", "format": "json", "limit": 1}
+                resp = await client.get(NOMINATIM_URL, params=params, headers=headers)
+                if resp.status_code == 200:
+                    results = resp.json()
+                    if results and len(results) > 0:
+                        lat = float(results[0]["lat"])
+                        lon = float(results[0]["lon"])
+                        raw_disp = results[0].get("display_name", "")
+                        if not display_name:
+                            parts = [p.strip() for p in raw_disp.split(",")]
+                            display_name = f"{parts[1] if len(parts) > 1 else parts[0]}, {parts[-3] if len(parts) > 3 else 'India'}"
+                        if not district and len(results[0].get("display_name", "").split(",")) > 2:
+                            district = results[0]["display_name"].split(",")[1].strip()
     except Exception as e:
-        logger.warning(f"Nominatim geocoding failed for {query_str}: {e}")
+        logger.warning(f"Nominatim geocoding failed for PIN {pin}: {e}")
 
     if lat is not None and lon is not None:
         result = {
             "pincode": pin,
             "lat": lat,
             "lon": lon,
-            "district": district,
-            "state": state,
-            "display_name": display_name or f"{district or pin}, {state or 'India'}"
+            "district": district or pin,
+            "state": state or "India",
+            "display_name": display_name or f"PIN {pin}, India"
         }
         await set_cached(cache_key, result, db)
         return result
@@ -141,23 +158,32 @@ async def geocode_pincode(pincode: str, db=None) -> Optional[dict]:
     return None
 
 
-async def query_osm_facilities(district: str, state: str, center_lat: float, center_lon: float, default_pin: str = "") -> List[dict]:
+async def query_osm_facilities(district: str, state: str, center_lat: float, center_lon: float, default_pin: str = "", specialty: str = "") -> List[dict]:
     """
     Phase 2: Look up OpenStreetMap hospitals, clinics, and pharmacies in the resolved area.
     """
     facilities = []
     seen = set()
 
-    # Query 1: Hospitals & Health Centers
-    # Query 2: Clinics & Pharmacies
     queries = [
         ("hospital", f"hospital in {district} {state} India"),
         ("clinic", f"clinic in {district} {state} India"),
     ]
 
+    # Add specialty-specific search if relevant
+    spec_lower = (specialty or "").lower()
+    if "cardio" in spec_lower:
+        queries.insert(0, ("hospital", f"heart hospital in {district} {state} India"))
+    elif "pediatric" in spec_lower:
+        queries.insert(0, ("hospital", f"children hospital in {district} {state} India"))
+    elif "ortho" in spec_lower:
+        queries.insert(0, ("hospital", f"orthopedic in {district} {state} India"))
+    elif "eye" in spec_lower or "ophthal" in spec_lower:
+        queries.insert(0, ("clinic", f"eye hospital in {district} {state} India"))
+
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
-            for fac_type, q_str in queries:
+            for fac_type, q_str in queries[:3]:
                 headers = {"User-Agent": USER_AGENT}
                 params = {"q": q_str, "format": "json", "limit": 6, "countrycodes": "in"}
                 resp = await client.get(NOMINATIM_URL, params=params, headers=headers)
@@ -204,7 +230,7 @@ async def query_osm_facilities(district: str, state: str, center_lat: float, cen
     return facilities
 
 
-async def get_nearby_osm_facilities(pincode: str, db=None) -> Tuple[List[dict], Optional[dict]]:
+async def get_nearby_osm_facilities(pincode: str, specialty: str = "", db=None) -> Tuple[List[dict], Optional[dict]]:
     """
     Phase 4: Caching & resilience pipeline.
     Live OSM Query -> Cached OSM -> Return empty list if all fail.
@@ -219,7 +245,7 @@ async def get_nearby_osm_facilities(pincode: str, db=None) -> Tuple[List[dict], 
 
     lat = geo["lat"]
     lon = geo["lon"]
-    cache_key = f"osm_facilities_{pin}"
+    cache_key = f"osm_facilities_{pin}_{specialty.lower() if specialty else 'general'}"
 
     # Check cache first
     cached_facilities = await get_cached(cache_key, db)
@@ -229,7 +255,7 @@ async def get_nearby_osm_facilities(pincode: str, db=None) -> Tuple[List[dict], 
     # Live OSM lookup
     district = geo.get("district") or pin
     state = geo.get("state") or "India"
-    facilities = await query_osm_facilities(district, state, lat, lon, default_pin=pin)
+    facilities = await query_osm_facilities(district, state, lat, lon, default_pin=pin, specialty=specialty)
 
     # Sort by distance
     facilities.sort(key=lambda x: x.get("distance_km", 999))

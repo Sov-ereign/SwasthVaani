@@ -548,9 +548,9 @@ def recommend_specialty(symptoms: List[str], transcript: str, urgency: str) -> s
     return "General Physician"
 
 async def find_recommended_providers(specialty: str, patient_pincode: Optional[str] = None) -> List[dict]:
-    """Phase 2 & Phase 3: Look up active/approved registered Clinics & NGOs as primary source,
-    merged with real-time OpenStreetMap nearby healthcare facilities and dynamic PIN-matched specialist doctors.
-    Registered providers rank first and are the ONLY ones that can receive trackable requests."""
+    """Phase 2 & Phase 3: Look up active/approved registered Clinics & NGOs and real-time OpenStreetMap
+    nearby healthcare facilities. When a PIN code is searched, real-time local facilities in that area
+    and local registered clinics are prioritized immediately."""
     if not specialty:
         return []
 
@@ -567,16 +567,35 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
     if not docs:
         docs = [p for p in IN_MEMORY_PROVIDERS if p.get("status") != "deactivated" and p.get("role") in ["clinic", "ngo"]]
 
-    scored_registered = []
     p_pin = (patient_pincode or "").strip()
 
-    # 1. Score and rank registered / verified database providers
+    # 1. Fetch real-time OpenStreetMap facilities for the searched PIN code
+    osm_facilities = []
+    geo_info = None
+    if p_pin and len(p_pin) == 6 and p_pin.isdigit():
+        try:
+            osm_list, geo_info = await get_nearby_osm_facilities(p_pin, specialty=specialty, db=db)
+            if osm_list:
+                for fac in osm_list:
+                    fac["is_registered"] = False
+                    fac["is_verified"] = False
+                    fac["can_receive_requests"] = False  # Strictly informational
+                    fac["match_score"] = 30
+                    osm_facilities.append(fac)
+        except Exception as e:
+            logger.warning(f"Error getting nearby OSM facilities for PIN {p_pin}: {e}")
+
+    # 2. Score and categorize registered providers (Local vs Telehealth Network)
+    local_registered = []
+    network_registered = []
+
     for doc in docs:
         prov = ProviderDoc.from_mongo(doc) if isinstance(doc, dict) and "_id" in doc else (doc if isinstance(doc, ProviderDoc) else ProviderDoc(**doc))
         score = 0
         prov_specs = [s.lower() for s in prov.specialties]
         prov_pin = (prov.pincode or "").strip()
 
+        # Specialty match scoring
         if specialty.lower() in prov_specs:
             score += 50
         elif "general physician" in prov_specs:
@@ -584,63 +603,49 @@ async def find_recommended_providers(specialty: str, patient_pincode: Optional[s
         else:
             score += 10
 
-        if p_pin and prov_pin:
-            if p_pin == prov_pin:
-                score += 50
-            elif len(p_pin) >= 3 and len(prov_pin) >= 3 and p_pin[:3] == prov_pin[:3]:
-                score += 30
-            elif len(p_pin) >= 2 and len(prov_pin) >= 2 and p_pin[:2] == prov_pin[:2]:
-                score += 15
-            else:
-                score += 5
-        else:
-            score += 10
-
         pub_data = prov.to_public_dict()
         pub_data["is_registered"] = True
         pub_data["is_verified"] = True
         pub_data["can_receive_requests"] = True
-        pub_data["match_score"] = score
-        scored_registered.append((score, pub_data))
 
-    scored_registered.sort(key=lambda x: x[0], reverse=True)
-    top_registered = [item[1] for item in scored_registered[:4]]
+        # Check proximity to searched PIN
+        if p_pin and prov_pin:
+            if p_pin == prov_pin:
+                score += 50
+                pub_data["match_score"] = score
+                local_registered.append((score, pub_data))
+            elif len(p_pin) >= 3 and len(prov_pin) >= 3 and p_pin[:3] == prov_pin[:3]:
+                score += 35
+                pub_data["match_score"] = score
+                local_registered.append((score, pub_data))
+            else:
+                score += 5
+                pub_data["match_score"] = score
+                network_registered.append((score, pub_data))
+        else:
+            pub_data["match_score"] = score
+            network_registered.append((score, pub_data))
 
-    # 2. Dynamic PIN Code Doctor Matching (Geocodes PIN -> District/PostOffice & generates localized doctors)
-    dyn_pincode_doctors = []
-    osm_facilities = []
-    if p_pin and len(p_pin) == 6 and p_pin.isdigit():
-        try:
-            geo = await geocode_pincode(p_pin, db=db)
-            district = (geo.get("district") if geo else "") or ""
-            state = (geo.get("state") if geo else "") or ""
-            po_name = (geo.get("display_name", "").split(",")[0] if geo else "") or ""
-            dyn_pincode_doctors = generate_dynamic_pincode_doctors(p_pin, specialty, district=district, state=state, po_name=po_name)
-        except Exception as e:
-            logger.warning(f"Error generating dynamic PIN doctors for {p_pin}: {e}")
+    local_registered.sort(key=lambda x: x[0], reverse=True)
+    network_registered.sort(key=lambda x: x[0], reverse=True)
 
-        try:
-            osm_list, _ = await get_nearby_osm_facilities(p_pin, db=db)
-            if osm_list:
-                for fac in osm_list:
-                    fac["is_registered"] = False
-                    fac["is_verified"] = False
-                    fac["can_receive_requests"] = False
-                    fac["match_score"] = 15
-                    osm_facilities.append(fac)
-        except Exception as e:
-            logger.warning(f"Error getting nearby OSM facilities for PIN {p_pin}: {e}")
+    top_local_reg = [item[1] for item in local_registered]
+    top_network_reg = [item[1] for item in network_registered[:3]]
 
-    # 3. Merge: Database Registered Providers + Dynamic PIN Doctors + OSM Facilities
+    # 3. Merging Strategy:
+    # If a specific PIN code was searched:
+    # [Local Registered Clinics (if matching PIN/district)] -> [Real-time Local OSM Facilities for that PIN] -> [Verified Telehealth Network]
     merged_results = []
-    seen_ids = set()
+    if top_local_reg:
+        merged_results.extend(top_local_reg)
 
-    for item in top_registered + dyn_pincode_doctors + osm_facilities:
-        iid = item.get("id") or item.get("name")
-        if iid and iid not in seen_ids:
-            seen_ids.add(iid)
-            merged_results.append(item)
+    if osm_facilities:
+        merged_results.extend(osm_facilities[:6])
 
+    if top_network_reg:
+        merged_results.extend(top_network_reg)
+
+    # Guarantee fallback if empty
     if not merged_results and docs:
         for doc in docs[:4]:
             prov = ProviderDoc.from_mongo(doc) if isinstance(doc, dict) and "_id" in doc else (doc if isinstance(doc, ProviderDoc) else ProviderDoc(**doc))
