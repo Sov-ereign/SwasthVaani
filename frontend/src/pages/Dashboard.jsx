@@ -1,13 +1,20 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, LogOut, AlertTriangle, Clock, Home, Phone, Globe, Users, RefreshCw, ArrowLeft, Stethoscope, Download, Search, Volume2, ShieldAlert, MapPin, Radio, Check, X, PhoneCall } from "lucide-react";
+import {
+    Activity, LogOut, AlertTriangle, Clock, Home, Phone, Globe, Users,
+    RefreshCw, ArrowLeft, Stethoscope, Download, Search, Volume2, ShieldAlert,
+    MapPin, Radio, Check, X, PhoneCall, Building2, UserCheck, ShieldCheck,
+    CheckCircle2, XCircle, CheckCheck, Trash2, Edit3, Filter, Plus, ChevronRight,
+    Send, Info
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { api, URGENCY_META } from "@/lib/api";
+import { Textarea } from "@/components/ui/textarea";
+import { api, URGENCY_META, SPECIALTY_LIST } from "@/lib/api";
 
 const ICONS = { emergency: AlertTriangle, soon: Clock, home: Home };
 const LANG_VOICE = { hi: "hi-IN", en: "en-US", bn: "bn-IN", ta: "ta-IN" };
@@ -30,142 +37,520 @@ const LLM_LABELS = {
     rule_fallback: "📋 Safety Rules",
 };
 
-export default function Dashboard() {
-    const [authed, setAuthed] = useState(!!localStorage.getItem("sv_token"));
+const REQUEST_STATUS_META = {
+    pending: {
+        label: "Pending Review",
+        icon: Clock,
+        badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+    },
+    accepted: {
+        label: "Accepted",
+        icon: CheckCircle2,
+        badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+    },
+    declined: {
+        label: "Declined",
+        icon: XCircle,
+        badge: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30",
+    },
+    completed: {
+        label: "Completed",
+        icon: CheckCheck,
+        badge: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30",
+    },
+};
 
-    if (!authed) return <Login onSuccess={() => setAuthed(true)} />;
-    return <DashboardView onLogout={() => { localStorage.removeItem("sv_token"); setAuthed(false); }} />;
+export default function Dashboard() {
+    const [token, setToken] = useState(localStorage.getItem("sv_token"));
+    const [user, setUser] = useState(null);
+    const [loadingUser, setLoadingUser] = useState(!!token);
+
+    const loadProfile = async () => {
+        if (!localStorage.getItem("sv_token")) {
+            setLoadingUser(false);
+            return;
+        }
+        try {
+            const { data } = await api.get("/auth/me");
+            setUser(data);
+        } catch (e) {
+            console.error("Auth me error:", e);
+            localStorage.removeItem("sv_token");
+            setToken(null);
+            setUser(null);
+        } finally {
+            setLoadingUser(false);
+        }
+    };
+
+    useEffect(() => {
+        loadProfile();
+    }, [token]);
+
+    const handleLoginSuccess = (data) => {
+        localStorage.setItem("sv_token", data.token);
+        setToken(data.token);
+        setUser(data);
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem("sv_token");
+        setToken(null);
+        setUser(null);
+        toast.info("Logged out successfully");
+    };
+
+    if (!token || !user) {
+        return <AuthPortal onSuccess={handleLoginSuccess} />;
+    }
+
+    if (user.role === "superadmin") {
+        return <SuperAdminDashboard user={user} onLogout={handleLogout} />;
+    }
+
+    return <ClinicDashboard user={user} onLogout={handleLogout} />;
 }
 
-function Login({ onSuccess }) {
+// -----------------------------------------------------------------------
+// Phase 1: Authentication & Registration Portal
+// -----------------------------------------------------------------------
+
+function AuthPortal({ onSuccess }) {
+    const [tab, setTab] = useState("signin"); // signin | register
     const [email, setEmail] = useState("clinic@swasthvaani.health");
     const [password, setPassword] = useState("clinic123");
     const [loading, setLoading] = useState(false);
 
-    const submit = async (e) => {
+    // Registration state
+    const [regName, setRegName] = useState("");
+    const [regType, setRegType] = useState("clinic"); // clinic | ngo
+    const [regFacilityType, setRegFacilityType] = useState("private_clinic");
+    const [regSpecialties, setRegSpecialties] = useState(["General Physician"]);
+    const [regQualification, setRegQualification] = useState("");
+    const [regPincode, setRegPincode] = useState("110001");
+    const [regAddress, setRegAddress] = useState("");
+    const [regPhone, setRegPhone] = useState("");
+    const [regEmail, setRegEmail] = useState("");
+    const [regPassword, setRegPassword] = useState("");
+
+    const handleSignIn = async (e) => {
         e.preventDefault();
         setLoading(true);
         try {
             const { data } = await api.post("/auth/login", { email, password });
-            localStorage.setItem("sv_token", data.token);
-            toast.success("Welcome back");
-            onSuccess();
+            toast.success(`Welcome back, ${data.name || data.email}!`);
+            onSuccess(data);
         } catch (err) {
-            if (email.trim().toLowerCase() === "clinic@swasthvaani.health" && password === "clinic123") {
-                localStorage.setItem("sv_token", "demo-token-12345");
-                toast.success("Signed in (Demo Mode)");
-                onSuccess();
-            } else {
-                toast.error(err?.response?.data?.detail || "Invalid login details");
+            toast.error(err?.response?.data?.detail || "Invalid login details");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRegister = async (e) => {
+        e.preventDefault();
+        if (!regName.trim() || !regEmail.trim() || !regPassword.trim() || !regPincode.trim()) {
+            return toast.error("Please fill all required fields");
+        }
+        setLoading(true);
+        try {
+            const payload = {
+                name: regName.trim(),
+                type: regType,
+                facility_type: regType === "ngo" ? "ngo" : regFacilityType,
+                specialties: regSpecialties,
+                qualification: regQualification.trim(),
+                pincode: regPincode.trim(),
+                address: regAddress.trim(),
+                phone: regPhone.trim(),
+                email: regEmail.trim(),
+                password: regPassword.trim()
+            };
+            const { data } = await api.post("/auth/register", payload);
+            toast.success("Facility registered successfully!");
+            onSuccess(data);
+        } catch (err) {
+            toast.error(err?.response?.data?.detail || "Registration failed. Please check inputs.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleSpecialty = (spec) => {
+        if (regSpecialties.includes(spec)) {
+            if (regSpecialties.length === 1) return toast.info("Select at least one department");
+            setRegSpecialties(regSpecialties.filter(s => s !== spec));
+        } else {
+            setRegSpecialties([...regSpecialties, spec]);
+        }
+    };
+
+    const setQuickDemo = (demoType) => {
+        if (demoType === "clinic") {
+            setEmail("clinic@swasthvaani.health");
+            setPassword("clinic123");
+        } else if (demoType === "ngo") {
+            setEmail("ngo@swasthvaani.health");
+            setPassword("ngo123");
+        } else if (demoType === "admin") {
+            setEmail("admin@swasthvaani.health");
+            setPassword("admin123");
+        }
+    };
+
+    return (
+        <div className="min-h-screen grain-bg flex" data-testid="clinic-login">
+            {/* Left Hero Banner */}
+            <div className="hidden lg:flex w-5/12 relative flex-col justify-between p-12 bg-zinc-950 text-white overflow-hidden">
+                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#22c55e_1px,transparent_1px)] [background-size:16px_16px]" />
+                <div className="relative z-10">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center shadow-lg">
+                            <Activity className="w-5 h-5 text-primary-foreground" />
+                        </div>
+                        <span className="font-head font-extrabold text-2xl tracking-tight">SwasthVaani</span>
+                    </div>
+                </div>
+
+                <div className="relative z-10 max-w-md">
+                    <Badge className="bg-primary/20 text-primary-foreground border-primary/30 text-xs font-bold mb-4">
+                        Healthcare Provider Network
+                    </Badge>
+                    <h2 className="font-head font-extrabold text-4xl tracking-tight leading-tight">
+                        Direct Patient Requests & Passive Area Surveillance
+                    </h2>
+                    <p className="mt-4 text-zinc-400 text-sm leading-relaxed">
+                        Clinics and NGOs receive prioritized consultation bookings from voice triage, while monitoring local disease outbreak trends in their PIN code.
+                    </p>
+                </div>
+
+                <div className="relative z-10 text-xs text-zinc-500 flex items-center justify-between border-t border-zinc-800 pt-4">
+                    <span>SwasthVaani Health System</span>
+                    <span>Role-Based Access Control</span>
+                </div>
+            </div>
+
+            {/* Right Form Area */}
+            <div className="flex-1 flex flex-col justify-center items-center px-6 py-12 max-h-screen overflow-y-auto">
+                <div className="w-full max-w-md">
+                    <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6">
+                        <ArrowLeft className="w-4 h-4" /> <span className="font-semibold text-sm">Home</span>
+                    </Link>
+
+                    <div className="flex items-center justify-between mb-6 border-b border-border/60 pb-3">
+                        <div>
+                            <h1 className="font-head font-extrabold text-2xl tracking-tight">
+                                {tab === "signin" ? "Provider Portal Login" : "Register Facility"}
+                            </h1>
+                            <p className="text-muted-foreground mt-0.5 text-xs">
+                                {tab === "signin" ? "Sign in to manage patient requests and triage logs." : "Register your Clinic or NGO for patient referrals."}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Mode Toggle Pills */}
+                    <div className="flex bg-muted/70 p-1 rounded-xl mb-6 border border-border/60">
+                        <button
+                            type="button"
+                            onClick={() => setTab("signin")}
+                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                                tab === "signin" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            Sign In
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTab("register")}
+                            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                                tab === "register" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            Register Clinic / NGO
+                        </button>
+                    </div>
+
+                    {tab === "signin" ? (
+                        <form onSubmit={handleSignIn} className="space-y-4">
+                            <div>
+                                <Label htmlFor="email" className="font-semibold text-xs">Email Address</Label>
+                                <Input
+                                    id="email"
+                                    data-testid="login-email"
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    className="mt-1 rounded-xl h-11 bg-card text-sm"
+                                    placeholder="doctor@clinic.health"
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <Label htmlFor="password" className="font-semibold text-xs">Password</Label>
+                                <Input
+                                    id="password"
+                                    data-testid="login-password"
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    className="mt-1 rounded-xl h-11 bg-card text-sm"
+                                    required
+                                />
+                            </div>
+
+                            <Button type="submit" disabled={loading} data-testid="login-submit" className="w-full rounded-full h-11 font-bold bg-primary hover:bg-primary/90 text-primary-foreground mt-2">
+                                {loading ? "Signing in…" : "Sign In to Console"}
+                            </Button>
+
+                            {/* Demo Quick-Fill Buttons */}
+                            <div className="mt-6 pt-5 border-t border-border/60">
+                                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2.5">
+                                    Demo Credentials (One-Click Fill)
+                                </p>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuickDemo("clinic")}
+                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                    >
+                                        🏥 Clinic Demo
+                                        <span className="block font-normal text-[10px] text-muted-foreground truncate">clinic@swasthvaani</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuickDemo("ngo")}
+                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                    >
+                                        🤝 NGO Demo
+                                        <span className="block font-normal text-[10px] text-muted-foreground truncate">ngo@swasthvaani</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuickDemo("admin")}
+                                        className="p-2 rounded-xl border border-border/80 bg-card hover:border-primary/50 text-[11px] font-bold text-left transition-all"
+                                    >
+                                        ⚡ Super Admin
+                                        <span className="block font-normal text-[10px] text-muted-foreground truncate">admin@swasthvaani</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    ) : (
+                        <form onSubmit={handleRegister} className="space-y-3.5 text-xs">
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <Label className="text-[11px] font-semibold">Account Type</Label>
+                                    <select
+                                        value={regType}
+                                        onChange={(e) => setRegType(e.target.value)}
+                                        className="w-full mt-1 h-9 rounded-xl bg-card border border-border px-2 text-xs font-semibold"
+                                    >
+                                        <option value="clinic">Clinic / Hospital</option>
+                                        <option value="ngo">NGO Health Mission</option>
+                                    </select>
+                                </div>
+                                {regType === "clinic" ? (
+                                    <div>
+                                        <Label className="text-[11px] font-semibold">Facility Model</Label>
+                                        <select
+                                            value={regFacilityType}
+                                            onChange={(e) => setRegFacilityType(e.target.value)}
+                                            className="w-full mt-1 h-9 rounded-xl bg-card border border-border px-2 text-xs font-semibold"
+                                        >
+                                            <option value="private_clinic">Private Clinic</option>
+                                            <option value="free_clinic">Free PHC / Charitable</option>
+                                        </select>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <Label className="text-[11px] font-semibold">Trust Model</Label>
+                                        <Input disabled value="Non-Profit NGO" className="h-9 text-xs bg-muted/60 mt-1" />
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <Label className="text-[11px] font-semibold">Facility / Organization Name *</Label>
+                                <Input
+                                    value={regName}
+                                    onChange={(e) => setRegName(e.target.value)}
+                                    placeholder="e.g. Apex Health Clinic / Seva Trust"
+                                    className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <Label className="text-[11px] font-semibold">Medical Qualifications / Certifications</Label>
+                                <Input
+                                    value={regQualification}
+                                    onChange={(e) => setRegQualification(e.target.value)}
+                                    placeholder="e.g. MBBS, MD, Reg #DEL-4821"
+                                    className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                />
+                            </div>
+
+                            {/* Specialties Checklist */}
+                            <div>
+                                <Label className="text-[11px] font-semibold block mb-1.5">Specialties & Departments (Select all that apply)</Label>
+                                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-card rounded-xl border border-border/70">
+                                    {SPECIALTY_LIST.map((spec) => {
+                                        const selected = regSpecialties.includes(spec);
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={spec}
+                                                onClick={() => toggleSpecialty(spec)}
+                                                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
+                                                    selected
+                                                        ? "bg-primary text-primary-foreground border-primary"
+                                                        : "bg-background border-border text-muted-foreground hover:text-foreground"
+                                                }`}
+                                            >
+                                                {selected ? `✓ ${spec}` : spec}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <Label className="text-[11px] font-semibold">6-Digit PIN Code *</Label>
+                                    <Input
+                                        value={regPincode}
+                                        onChange={(e) => setRegPincode(e.target.value)}
+                                        placeholder="110001"
+                                        className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[11px] font-semibold">Contact Phone</Label>
+                                    <Input
+                                        value={regPhone}
+                                        onChange={(e) => setRegPhone(e.target.value)}
+                                        placeholder="+91 98765 43210"
+                                        className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <Label className="text-[11px] font-semibold">Street / Area Address</Label>
+                                <Input
+                                    value={regAddress}
+                                    onChange={(e) => setRegAddress(e.target.value)}
+                                    placeholder="12 Health Care Ave, Central District"
+                                    className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <Label className="text-[11px] font-semibold">Login Email *</Label>
+                                    <Input
+                                        type="email"
+                                        value={regEmail}
+                                        onChange={(e) => setRegEmail(e.target.value)}
+                                        placeholder="contact@facility.health"
+                                        className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-[11px] font-semibold">Password *</Label>
+                                    <Input
+                                        type="password"
+                                        value={regPassword}
+                                        onChange={(e) => setRegPassword(e.target.value)}
+                                        className="mt-1 h-9 text-xs rounded-xl bg-card"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <Button type="submit" disabled={loading} className="w-full rounded-full h-11 font-bold bg-primary hover:bg-primary/90 text-primary-foreground mt-2 text-xs">
+                                {loading ? "Creating Account…" : "Complete Facility Registration"}
+                            </Button>
+                        </form>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// -----------------------------------------------------------------------
+// Phase 4: Clinic & NGO Dashboard View (Direct Requests + Area Triage)
+// -----------------------------------------------------------------------
+
+function ClinicDashboard({ user, onLogout }) {
+    const [activeTab, setActiveTab] = useState("direct_requests"); // direct_requests | area_triage
+    const [directRequests, setDirectRequests] = useState([]);
+    const [areaTriage, setAreaTriage] = useState([]);
+    const [stats, setStats] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    // Direct request action modal state
+    const [actingRequest, setActingRequest] = useState(null);
+    const [actionNote, setActionNote] = useState("");
+    const [updatingStatus, setUpdatingStatus] = useState(false);
+
+    // Area filter state
+    const [areaUrgencyFilter, setAreaUrgencyFilter] = useState("all");
+    const [areaSearch, setAreaSearch] = useState("");
+    const [viewMode, setViewMode] = useState("table"); // table | outbreak
+    const [selectedAreaItem, setSelectedAreaItem] = useState(null);
+
+    const providerInfo = user.provider || {};
+    const provPin = providerInfo.pincode || "";
+
+    const loadData = async () => {
+        setLoading(true);
+        try {
+            const [reqRes, areaRes, statRes] = await Promise.all([
+                api.get("/clinic/requests"),
+                api.get("/clinic/area-triage", { params: { pincode: provPin } }),
+                api.get("/triage/stats")
+            ]);
+            setDirectRequests(reqRes.data || []);
+            setAreaTriage(areaRes.data || []);
+            setStats(statRes.data);
+        } catch (e) {
+            console.error("Dashboard load error:", e);
+            if (e?.response?.status === 401) {
+                toast.error("Session expired");
+                onLogout();
             }
         } finally {
             setLoading(false);
         }
     };
 
-    return (
-        <div className="min-h-screen grain-bg flex" data-testid="clinic-login">
-            <div className="hidden lg:block w-1/2 relative">
-                <img src="https://images.pexels.com/photos/5355853/pexels-photo-5355853.jpeg?auto=compress&cs=tinysrgb&w=1200"
-                    alt="Medical professional" className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-foreground/40" />
-                <div className="absolute bottom-10 left-10 right-10 text-background">
-                    <h2 className="font-head font-extrabold text-4xl tracking-tight">Clinic triage console</h2>
-                    <p className="mt-3 text-background/80 text-lg">Every incoming voice request, ranked by urgency — so you know who needs you first.</p>
-                </div>
-            </div>
-            <div className="flex-1 flex items-center justify-center px-6">
-                <div className="w-full max-w-sm">
-                    <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-8">
-                        <ArrowLeft className="w-4 h-4" /> <span className="font-semibold text-sm">Home</span>
-                    </Link>
-                    <div className="flex items-center gap-2.5 mb-6">
-                        <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-                            <Activity className="w-5 h-5 text-primary-foreground" />
-                        </div>
-                        <span className="font-head font-extrabold text-xl tracking-tight">SwasthVaani</span>
-                    </div>
-                    <h1 className="font-head font-extrabold text-2xl tracking-tight">Clinic login</h1>
-                    <p className="text-muted-foreground mt-1 text-sm">Sign in to view triage requests.</p>
-                    <form onSubmit={submit} className="mt-6 space-y-4">
-                        <div>
-                            <Label htmlFor="email" className="font-semibold">Email</Label>
-                            <Input id="email" data-testid="login-email" value={email} onChange={(e) => setEmail(e.target.value)}
-                                className="mt-1.5 rounded-xl h-12 bg-card" />
-                        </div>
-                        <div>
-                            <Label htmlFor="password" className="font-semibold">Password</Label>
-                            <Input id="password" type="password" data-testid="login-password" value={password}
-                                onChange={(e) => setPassword(e.target.value)} className="mt-1.5 rounded-xl h-12 bg-card" />
-                        </div>
-                        <Button type="submit" disabled={loading} data-testid="login-submit"
-                            className="w-full rounded-full h-12 font-bold bg-primary hover:bg-primary/90 transition-colors">
-                            {loading ? "Signing in…" : "Sign in"}
-                        </Button>
-                    </form>
-                    <p className="text-xs text-muted-foreground mt-4">Demo: clinic@swasthvaani.health / clinic123</p>
-                </div>
-            </div>
-        </div>
-    );
-}
+    useEffect(() => {
+        loadData();
+        const iv = setInterval(loadData, 20000);
+        return () => clearInterval(iv);
+    }, []);
 
-function StatCard({ icon: Icon, label, value, tone, testid }) {
-    return (
-        <div className="bg-card border border-border rounded-2xl p-5" data-testid={testid}>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${tone}`}>
-                <Icon className="w-5 h-5" />
-            </div>
-            <p className="font-head font-extrabold text-3xl tracking-tight">{value}</p>
-            <p className="text-sm text-muted-foreground mt-0.5">{label}</p>
-        </div>
-    );
-}
-
-function DashboardView({ onLogout }) {
-    const [requests, setRequests] = useState([]);
-    const [stats, setStats] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [filterUrgency, setFilterUrgency] = useState("all");
-    const [searchQuery, setSearchQuery] = useState("");
-    const [viewMode, setViewMode] = useState("table"); // table | outbreak
-    const [selectedRequest, setSelectedRequest] = useState(null);
-
-    const load = async () => {
+    const handleUpdateStatus = async (requestId, status, notes = "") => {
+        setUpdatingStatus(true);
         try {
-            const [r, s] = await Promise.all([api.get("/triage/requests"), api.get("/triage/stats")]);
-            setRequests(r.data);
-            setStats(s.data);
+            const { data } = await api.patch(`/clinic/requests/${requestId}/status`, {
+                status,
+                notes
+            });
+            toast.success(`Request marked as ${status.toUpperCase()}`);
+            setDirectRequests(directRequests.map(r => (r.id === requestId || r._id === requestId ? data : r)));
+            setActingRequest(null);
+            setActionNote("");
         } catch (e) {
-            if (e?.response?.status === 401) { toast.error("Session expired"); onLogout(); }
-        } finally { setLoading(false); }
-    };
-
-    useEffect(() => { load(); const iv = setInterval(load, 15000); return () => clearInterval(iv); }, []);
-
-    const exportCSV = () => {
-        if (!requests.length) return toast.error("No data to export");
-        const headers = ["Caller", "Source", "Language", "Urgency", "Flagged", "RedFlags", "Symptoms", "Advice", "CreatedAt"];
-        const rows = requests.map(r => [
-            `"${r.caller}"`,
-            `"${r.source}"`,
-            `"${r.language}"`,
-            `"${r.urgency}"`,
-            `"${r.flagged ? 'YES' : 'no'}"`,
-            `"${(r.red_flags || []).join('; ')}"`,
-            `"${(r.symptoms || []).join('; ')}"`,
-            `"${(r.spoken || r.advice).replace(/"/g, '""')}"`,
-            `"${r.created_at}"`
-        ]);
-        const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `swasthvaani_triage_${new Date().toISOString().slice(0, 10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        toast.success("Exported triage log CSV");
+            toast.error("Could not update request status");
+        } finally {
+            setUpdatingStatus(false);
+        }
     };
 
     const playDoctorAudio = (text, languageCode) => {
@@ -175,126 +560,282 @@ function DashboardView({ onLogout }) {
         utterance.lang = LANG_VOICE[languageCode] || "hi-IN";
         utterance.rate = 0.95;
         window.speechSynthesis.speak(utterance);
-        toast.info("Playing patient's spoken advice audio...");
+        toast.info("Playing spoken advice audio...");
     };
 
-    const filteredRequests = requests.filter(r => {
-        const matchesUrgency = filterUrgency === "all" || r.urgency === filterUrgency;
-        const matchesSearch = !searchQuery.trim() || 
-            (r.caller && r.caller.toLowerCase().includes(searchQuery.toLowerCase())) ||
-            (r.transcript && r.transcript.toLowerCase().includes(searchQuery.toLowerCase())) ||
-            (r.summary && r.summary.toLowerCase().includes(searchQuery.toLowerCase()));
+    const pendingDirectCount = directRequests.filter(r => r.status === "pending").length;
+
+    const filteredAreaTriage = areaTriage.filter(r => {
+        const matchesUrgency = areaUrgencyFilter === "all" || r.urgency === areaUrgencyFilter;
+        const matchesSearch = !areaSearch.trim() ||
+            (r.caller && r.caller.toLowerCase().includes(areaSearch.toLowerCase())) ||
+            (r.transcript && r.transcript.toLowerCase().includes(areaSearch.toLowerCase())) ||
+            (r.summary && r.summary.toLowerCase().includes(areaSearch.toLowerCase()));
         return matchesUrgency && matchesSearch;
     });
 
-    const feverCount = requests.filter(r => (r.transcript || "").toLowerCase().includes("fever") || (r.transcript || "").includes("बुखार") || (r.transcript || "").includes("জ্বর")).length;
-    const isOutbreakWarning = feverCount >= 2 || requests.length >= 4;
-
     return (
         <div className="min-h-screen grain-bg" data-testid="clinic-dashboard">
-            <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-md border-b border-border">
+            {/* Header */}
+            <header className="sticky top-0 z-30 bg-background/90 backdrop-blur-md border-b border-border/80">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-xs">
                             <Activity className="w-5 h-5 text-primary-foreground" />
                         </div>
                         <div>
-                            <span className="font-head font-extrabold tracking-tight leading-none block">SwasthVaani</span>
-                            <span className="text-xs text-muted-foreground">Clinic & PHC Console</span>
+                            <div className="flex items-center gap-2">
+                                <span className="font-head font-extrabold tracking-tight text-foreground">{providerInfo.name || "Clinic Console"}</span>
+                                <Badge className="text-[10px] uppercase font-bold py-0.5 px-2 bg-primary/10 text-primary border-primary/20">
+                                    {user.role === "ngo" ? "NGO Mission" : "Healthcare Clinic"}
+                                </Badge>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                                {provPin && <span>PIN: <b>{provPin}</b> · </span>}
+                                {providerInfo.qualification || "Registered Partner"}
+                            </span>
                         </div>
                     </div>
+
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={exportCSV} className="rounded-full font-semibold border-2 hidden sm:inline-flex">
-                            <Download className="w-4 h-4 mr-1.5" /> Export CSV
+                        <Button variant="ghost" size="sm" onClick={loadData} className="rounded-full text-xs font-semibold">
+                            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={load} data-testid="refresh-btn" className="rounded-full font-semibold">
-                            <RefreshCw className="w-4 h-4 mr-1.5" /> Refresh
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={onLogout} data-testid="logout-btn" className="rounded-full font-semibold border-2">
-                            <LogOut className="w-4 h-4 mr-1.5" /> Logout
+                        <Button variant="outline" size="sm" onClick={onLogout} className="rounded-full text-xs font-semibold border-border/80">
+                            <LogOut className="w-3.5 h-3.5 mr-1.5" /> Logout
                         </Button>
                     </div>
                 </div>
             </header>
 
             <main className="max-w-7xl mx-auto px-6 py-8">
-                {/* Outbreak Radar Banner Alert */}
-                {isOutbreakWarning && (
-                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-                        className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 mb-6 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
-                                <ShieldAlert className="w-5 h-5" />
-                            </div>
-                            <div>
-                                <p className="font-head font-bold text-sm text-amber-900 dark:text-amber-200">Potential Regional Outbreak Alert Detected</p>
-                                <p className="text-xs text-amber-800/80 dark:text-amber-300">Cluster of fever & infection voice requests detected across village centers. Alert sent to Block Medical Officer.</p>
-                            </div>
+                {/* Top View Selector Tabs (Clearly Separate Views) */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border/60 mb-6">
+                    <div>
+                        <h1 className="font-head font-extrabold text-2xl sm:text-3xl tracking-tight">Clinical Care Dashboard</h1>
+                        <p className="text-sm text-muted-foreground mt-0.5">Manage patient referrals or review passive health logs in your area.</p>
+                    </div>
+
+                    {/* View Switcher Tabs */}
+                    <div className="flex bg-muted/80 p-1 rounded-2xl border border-border/60 self-start sm:self-auto">
+                        <button
+                            onClick={() => setActiveTab("direct_requests")}
+                            data-testid="tab-direct-requests"
+                            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition-all ${
+                                activeTab === "direct_requests"
+                                    ? "bg-card text-foreground shadow-xs border border-border/80"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            <Stethoscope className="w-3.5 h-3.5 text-primary" />
+                            Direct Patient Requests
+                            {pendingDirectCount > 0 && (
+                                <span className="w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+                                    {pendingDirectCount}
+                                </span>
+                            )}
+                        </button>
+
+                        <button
+                            onClick={() => setActiveTab("area_triage")}
+                            data-testid="tab-area-triage"
+                            className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition-all ${
+                                activeTab === "area_triage"
+                                    ? "bg-card text-foreground shadow-xs border border-border/80"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            <MapPin className="w-3.5 h-3.5 text-secondary" />
+                            Area Triage Overview
+                        </button>
+                    </div>
+                </div>
+
+                {/* ------------------------------------------------------------------- */}
+                {/* TAB 1: DIRECT PATIENT REQUESTS VIEW                                 */}
+                {/* ------------------------------------------------------------------- */}
+                {activeTab === "direct_requests" && (
+                    <div className="space-y-6" data-testid="direct-requests-panel">
+                        {/* Summary Metrics */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                            <StatCard
+                                testid="stat-direct-total"
+                                icon={Users}
+                                label="Total Referrals"
+                                value={directRequests.length}
+                                tone="bg-primary/10 text-primary"
+                            />
+                            <StatCard
+                                testid="stat-direct-pending"
+                                icon={Clock}
+                                label="Pending Review"
+                                value={directRequests.filter(r => r.status === "pending").length}
+                                tone="bg-amber-500/15 text-amber-600"
+                            />
+                            <StatCard
+                                testid="stat-direct-accepted"
+                                icon={CheckCircle2}
+                                label="Accepted / Scheduled"
+                                value={directRequests.filter(r => r.status === "accepted").length}
+                                tone="bg-emerald-500/15 text-emerald-600"
+                            />
+                            <StatCard
+                                testid="stat-direct-completed"
+                                icon={CheckCheck}
+                                label="Completed"
+                                value={directRequests.filter(r => r.status === "completed").length}
+                                tone="bg-blue-500/15 text-blue-600"
+                            />
                         </div>
-                        <Button onClick={() => setViewMode(viewMode === "table" ? "outbreak" : "table")} size="sm" className="rounded-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0">
-                            {viewMode === "table" ? "View Outbreak Radar" : "View Queue"}
-                        </Button>
-                    </motion.div>
+
+                        {/* Requests Feed */}
+                        <div className="bg-card border border-border/80 rounded-2xl p-6 shadow-xs">
+                            <div className="flex items-center justify-between mb-4 border-b border-border/50 pb-3">
+                                <div>
+                                    <h3 className="font-head font-bold text-lg text-foreground">Direct Consultation Requests</h3>
+                                    <p className="text-xs text-muted-foreground">Patients who explicitly selected your clinic/NGO after AI voice triage.</p>
+                                </div>
+                                <Badge variant="outline" className="font-bold text-xs">{directRequests.length} Total</Badge>
+                            </div>
+
+                            {directRequests.length === 0 ? (
+                                <div className="py-16 text-center text-muted-foreground flex flex-col items-center">
+                                    <Stethoscope className="w-8 h-8 text-muted-foreground/50 mb-3" />
+                                    <p className="font-semibold text-sm">No direct patient requests received yet.</p>
+                                    <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                                        When patients complete voice triage and pick your facility, their symptoms and contact details will appear here.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {directRequests.map((req, idx) => {
+                                        const statusMeta = REQUEST_STATUS_META[req.status] || REQUEST_STATUS_META.pending;
+                                        const StatusIcon = statusMeta.icon;
+                                        const urgencyMeta = URGENCY_META[req.triage_urgency] || URGENCY_META.soon;
+
+                                        return (
+                                            <div
+                                                key={req.id || req._id || idx}
+                                                className="bg-background/60 border border-border/70 rounded-2xl p-5 hover:border-border transition-all"
+                                                data-testid={`clinic-request-item-${req.id || idx}`}
+                                            >
+                                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-3 border-b border-border/40">
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="font-bold text-base text-foreground">{req.patient_name || "Patient"}</h4>
+                                                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${statusMeta.badge}`}>
+                                                                <StatusIcon className="w-3 h-3" /> {statusMeta.label}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                                                            <span>Phone: <b>{req.patient_contact || "Anonymous Web Session"}</b></span>
+                                                            {req.patient_pincode && <span>· PIN: <b>{req.patient_pincode}</b></span>}
+                                                            <span>· Requested: {new Date(req.created_at).toLocaleString()}</span>
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1.5 self-start">
+                                                        <Badge className={`${urgencyMeta.badge} font-bold text-xs rounded-full border-0`}>
+                                                            {urgencyMeta.label}
+                                                        </Badge>
+                                                    </div>
+                                                </div>
+
+                                                {/* Clinical Summary & Transcript */}
+                                                <div className="py-3 text-xs space-y-2">
+                                                    <div>
+                                                        <span className="font-semibold text-muted-foreground uppercase text-[10px] tracking-wide">Symptoms & Triage Summary:</span>
+                                                        <p className="text-foreground font-semibold mt-0.5">{req.symptom_summary || "Symptom check"}</p>
+                                                    </div>
+                                                    {req.transcript && (
+                                                        <p className="italic text-muted-foreground bg-muted/40 p-2.5 rounded-xl border border-border/40">
+                                                            "{req.transcript}"
+                                                        </p>
+                                                    )}
+                                                    {req.notes && (
+                                                        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-2.5 text-emerald-800 dark:text-emerald-300">
+                                                            <span className="font-bold">Clinic Note:</span> {req.notes}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Actions Toolbar */}
+                                                <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border/40">
+                                                    <div className="text-[11px] text-muted-foreground font-medium flex items-center gap-1.5">
+                                                        <Stethoscope className="w-3.5 h-3.5 text-primary" />
+                                                        Specialty: <b>{req.suggested_specialty || "General Physician"}</b>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2">
+                                                        {req.status === "pending" && (
+                                                            <>
+                                                                <Button
+                                                                    size="sm"
+                                                                    onClick={() => setActingRequest(req)}
+                                                                    className="rounded-full h-8 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                                >
+                                                                    <Check className="w-3.5 h-3.5 mr-1" /> Accept & Schedule
+                                                                </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    onClick={() => handleUpdateStatus(req.id || req._id, "declined")}
+                                                                    className="rounded-full h-8 px-3 text-xs font-bold text-rose-600 hover:bg-rose-50 border-rose-200"
+                                                                >
+                                                                    <X className="w-3.5 h-3.5 mr-1" /> Decline
+                                                                </Button>
+                                                            </>
+                                                        )}
+
+                                                        {req.status === "accepted" && (
+                                                            <Button
+                                                                size="sm"
+                                                                onClick={() => handleUpdateStatus(req.id || req._id, "completed")}
+                                                                className="rounded-full h-8 px-3 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white"
+                                                            >
+                                                                <CheckCheck className="w-3.5 h-3.5 mr-1" /> Mark Complete
+                                                            </Button>
+                                                        )}
+
+                                                        {req.status === "declined" && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => handleUpdateStatus(req.id || req._id, "pending")}
+                                                                className="rounded-full h-8 px-3 text-xs font-bold"
+                                                            >
+                                                                Re-open Request
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 )}
 
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
-                    <div>
-                        <h1 className="font-head font-extrabold text-3xl tracking-tight">Incoming triage</h1>
-                        <p className="text-muted-foreground mt-1">Live queue of voice requests from patients, ASHA workers, and IVR calls.</p>
-                    </div>
-                    <div className="flex gap-2">
-                        <button onClick={() => setViewMode("table")} className={`px-4 py-2 rounded-full text-xs font-bold border transition-colors ${viewMode === "table" ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground"}`}>
-                            Triage Queue
-                        </button>
-                        <button onClick={() => setViewMode("outbreak")} className={`px-4 py-2 rounded-full text-xs font-bold border transition-colors flex items-center gap-1.5 ${viewMode === "outbreak" ? "bg-amber-600 text-white border-amber-600" : "bg-card border-border text-foreground"}`}>
-                            <Radio className="w-3.5 h-3.5" /> Outbreak Radar 🗺️
-                        </button>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                    <StatCard testid="stat-total" icon={Users} label="Total requests" value={stats?.total ?? "—"} tone="bg-primary/10 text-primary" />
-                    <StatCard testid="stat-emergency" icon={AlertTriangle} label="Emergencies today" value={stats?.emergencies_today ?? "—"} tone="bg-destructive/10 text-destructive" />
-                    <StatCard testid="stat-ivr" icon={Phone} label="IVR calls" value={stats?.by_source?.ivr ?? 0} tone="bg-secondary/15 text-secondary" />
-                    <StatCard testid="stat-active" icon={Stethoscope} label="Need a doctor" value={(stats?.by_urgency?.emergency ?? 0) + (stats?.by_urgency?.soon ?? 0)} tone="bg-accent/20 text-accent" />
-                </div>
-
-                {viewMode === "outbreak" ? (
-                    <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                        <div className="flex items-center justify-between mb-4">
-                            <div>
-                                <h3 className="font-head font-bold text-lg flex items-center gap-2">
-                                    <MapPin className="w-5 h-5 text-destructive" /> Regional Disease Outbreak Radar
-                                </h3>
-                                <p className="text-xs text-muted-foreground">Geographic clustering of incoming symptom voice logs</p>
-                            </div>
-                            <Badge className="bg-amber-500/20 text-amber-800 border-amber-300 font-bold">Active Surveillance</Badge>
+                {/* ------------------------------------------------------------------- */}
+                {/* TAB 2: AREA OVERVIEW (PASSIVE SURVEILLANCE & LOGS)                   */}
+                {/* ------------------------------------------------------------------- */}
+                {activeTab === "area_triage" && (
+                    <div className="space-y-6" data-testid="area-triage-panel">
+                        {/* Summary Metrics */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                            <StatCard testid="stat-total" icon={Users} label="Total Area Triage" value={areaTriage.length} tone="bg-primary/10 text-primary" />
+                            <StatCard testid="stat-emergency" icon={AlertTriangle} label="Emergencies Today" value={stats?.emergencies_today ?? 0} tone="bg-destructive/10 text-destructive" />
+                            <StatCard testid="stat-ivr" icon={Phone} label="IVR Calls" value={stats?.by_source?.ivr ?? 0} tone="bg-secondary/15 text-secondary" />
+                            <StatCard testid="stat-doctor" icon={Stethoscope} label="Needs Doctor" value={(stats?.by_urgency?.emergency ?? 0) + (stats?.by_urgency?.soon ?? 0)} tone="bg-accent/20 text-accent" />
                         </div>
-                        <div className="grid md:grid-cols-3 gap-4 mt-6">
-                            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4">
-                                <p className="font-bold text-destructive text-sm">Rampur Village Cluster</p>
-                                <p className="text-2xl font-head font-extrabold text-destructive mt-1">4 Cases</p>
-                                <p className="text-xs text-muted-foreground mt-1">High fever + body pain (Dengue warning)</p>
-                            </div>
-                            <div className="bg-accent/20 border border-accent/30 rounded-xl p-4">
-                                <p className="font-bold text-amber-900 dark:text-amber-200 text-sm">Sundarpur Ward 2</p>
-                                <p className="text-2xl font-head font-extrabold text-amber-900 dark:text-amber-200 mt-1">2 Cases</p>
-                                <p className="text-xs text-muted-foreground mt-1">Severe cough & breathing issues</p>
-                            </div>
-                            <div className="bg-secondary/15 border border-secondary/30 rounded-xl p-4">
-                                <p className="font-bold text-secondary text-sm">Kalyanpur Sector</p>
-                                <p className="text-2xl font-head font-extrabold text-secondary mt-1">1 Case</p>
-                                <p className="text-xs text-muted-foreground mt-1">Mild seasonal cold</p>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <>
-                        {/* Filter and Search Bar */}
-                        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
-                            <div className="flex gap-2 w-full sm:w-auto">
+
+                        {/* Search & Filter Bar */}
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className="flex gap-2 flex-wrap">
                                 {[
-                                    { id: "all", label: "All" },
+                                    { id: "all", label: "All Cases" },
                                     { id: "emergency", label: "Emergency 🚨" },
                                     { id: "soon", label: "See Soon ⏳" },
                                     { id: "home", label: "Home Care 🏠" },
@@ -302,9 +843,9 @@ function DashboardView({ onLogout }) {
                                 ].map(t => (
                                     <button
                                         key={t.id}
-                                        onClick={() => setFilterUrgency(t.id)}
+                                        onClick={() => setAreaUrgencyFilter(t.id)}
                                         className={`px-4 py-2 rounded-full text-xs font-bold border transition-colors ${
-                                            filterUrgency === t.id ? "bg-foreground text-background border-foreground" : "bg-card border-border text-muted-foreground hover:text-foreground"
+                                            areaUrgencyFilter === t.id ? "bg-foreground text-background border-foreground" : "bg-card border-border text-muted-foreground hover:text-foreground"
                                         }`}
                                     >
                                         {t.label}
@@ -316,42 +857,40 @@ function DashboardView({ onLogout }) {
                                 <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
                                 <Input
                                     placeholder="Search symptoms or caller..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    value={areaSearch}
+                                    onChange={(e) => setAreaSearch(e.target.value)}
                                     className="pl-9 rounded-full bg-card h-10 text-xs"
                                 />
                             </div>
                         </div>
 
-                        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-sm">
+                        {/* Area Triage Table */}
+                        <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-xs">
                             <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-muted/60 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 <div className="col-span-3">Caller</div>
-                                <div className="col-span-4">Symptoms</div>
-                                <div className="col-span-2">Urgency</div>
+                                <div className="col-span-4">Symptoms & Summary</div>
+                                <div className="col-span-2">Triage Urgency</div>
                                 <div className="col-span-1">Audio</div>
                                 <div className="col-span-2 text-right">Time</div>
                             </div>
-                            <div className="divide-y divide-border" data-testid="requests-table">
-                                {loading ? (
-                                    <div className="px-6 py-16 text-center text-muted-foreground">Loading queue…</div>
-                                ) : filteredRequests.length === 0 ? (
-                                    <div className="px-6 py-16 text-center">
-                                        <p className="font-head font-bold text-lg">No matching triage requests</p>
-                                        <p className="text-muted-foreground mt-1">
-                                            Open the <Link to="/speak" className="text-primary font-semibold underline">voice demo</Link> and speak symptoms to see one appear here.
-                                        </p>
+                            <div className="divide-y divide-border">
+                                {filteredAreaTriage.length === 0 ? (
+                                    <div className="px-6 py-16 text-center text-muted-foreground">
+                                        No area triage logs matching current filter.
                                     </div>
                                 ) : (
-                                    filteredRequests.map((r, i) => {
+                                    filteredAreaTriage.map((r, i) => {
                                         const meta = URGENCY_META[r.urgency] || URGENCY_META.soon;
                                         const Icon = ICONS[r.urgency] || Clock;
                                         const isEmergency = r.urgency === "emergency";
                                         return (
-                                            <motion.div key={r.id || i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                                                onClick={() => setSelectedRequest(r)}
-                                                className={`grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-muted/30 transition-all border-l-4 cursor-pointer hover:translate-x-0.5 ${
+                                            <div
+                                                key={r.id || i}
+                                                onClick={() => setSelectedAreaItem(r)}
+                                                className={`grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-muted/30 transition-all border-l-4 cursor-pointer ${
                                                     isEmergency ? "border-l-destructive bg-destructive/5 hover:bg-destructive/10" : "border-l-transparent"
-                                                }`} data-testid={`request-row-${i}`}>
+                                                }`}
+                                            >
                                                 <div className="col-span-3 flex items-center gap-2 min-w-0">
                                                     <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${r.source === "ivr" ? "bg-secondary/15 text-secondary" : "bg-primary/10 text-primary"}`}>
                                                         {r.source === "ivr" ? <Phone className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
@@ -361,215 +900,444 @@ function DashboardView({ onLogout }) {
                                                         <p className="text-xs text-muted-foreground capitalize">{r.source} · {r.language.toUpperCase()}</p>
                                                     </div>
                                                 </div>
+
                                                 <div className="col-span-4 min-w-0">
                                                     <p className="text-sm font-semibold text-foreground truncate">{r.summary || r.transcript}</p>
                                                     <p className="text-xs text-muted-foreground truncate italic">"{r.transcript}"</p>
-                                                    {/* Symptoms chips */}
                                                     {r.symptoms && r.symptoms.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 mt-1.5">
-                                                            {r.symptoms.slice(0, 4).map((s, si) => (
+                                                            {r.symptoms.slice(0, 3).map((s, si) => (
                                                                 <span key={si} className="bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full font-medium">{s}</span>
                                                             ))}
                                                         </div>
                                                     )}
-                                                    {/* Red flags for flagged cases */}
-                                                    {r.flagged && r.red_flags && r.red_flags.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1 mt-1.5">
-                                                            {r.red_flags.slice(0, 3).map((rf, ri) => (
-                                                                <span key={ri} className="bg-destructive/15 text-destructive text-xs px-2 py-0.5 rounded-full font-bold">🚨 {rf}</span>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                    {/* Provider Cascade & Latency Tags (Tier 2) */}
-                                                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                                                        <span className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 text-[10px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                                                            {ASR_LABELS[r.asr_provider] || `⚡ ${r.asr_provider || "Groq Whisper"}`}
-                                                        </span>
-                                                        <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1 border ${
-                                                            (r.llm_provider === "red_flag_override" || r.flagged)
-                                                                ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/25 font-bold"
-                                                                : "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20"
-                                                        }`}>
-                                                            {LLM_LABELS[r.llm_provider] || (r.flagged ? "🛡️ Safety Gate (Red-Flag)" : `🧠 ${r.llm_provider || "Groq Llama 3.3"}`)}
-                                                        </span>
-                                                        {(r.latency_ms || 280) > 0 && (
-                                                            <span className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
-                                                                ⏱️ {r.latency_ms || 280}ms
-                                                            </span>
-                                                        )}
-                                                        {r.is_seed_data && (
-                                                            <span className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
-                                                                📌 Sample Data
-                                                            </span>
-                                                        )}
-                                                    </div>
                                                 </div>
+
                                                 <div className="col-span-2 flex flex-col gap-1">
-                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1 w-fit`}>
+                                                    <Badge className={`${meta.badge} rounded-full gap-1.5 font-semibold border-0 px-3 py-1 w-fit text-xs`}>
                                                         <Icon className="w-3.5 h-3.5" /> {meta.label}
                                                     </Badge>
-                                                    {r.flagged && (
-                                                        <Badge className="bg-destructive text-destructive-foreground rounded-full gap-1 font-bold border-0 px-2.5 py-0.5 text-xs w-fit">
-                                                            🚨 Flagged
-                                                        </Badge>
-                                                    )}
                                                 </div>
+
                                                 <div className="col-span-1">
-                                                    <button onClick={(e) => { e.stopPropagation(); playDoctorAudio(r.spoken || r.advice || r.transcript, r.language); }}
-                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center" title="Listen to Patient Audio">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            playDoctorAudio(r.spoken || r.advice || r.transcript, r.language);
+                                                        }}
+                                                        className="w-8 h-8 rounded-full bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-colors flex items-center justify-center"
+                                                        title="Play voice output"
+                                                    >
                                                         <Volume2 className="w-4 h-4" />
                                                     </button>
                                                 </div>
+
                                                 <div className="col-span-2 text-right text-xs font-medium text-muted-foreground">
                                                     {new Date(r.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                                                 </div>
-                                            </motion.div>
+                                            </div>
                                         );
                                     })
                                 )}
                             </div>
                         </div>
-                    </>
+                    </div>
                 )}
             </main>
 
-            {/* Case Detail Modal overlay */}
+            {/* Accept / Schedule Dialog Box */}
             <AnimatePresence>
-                {selectedRequest && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-sm" onClick={() => setSelectedRequest(null)}>
-                        <motion.div 
-                            initial={{ opacity: 0, scale: 0.95, y: 15 }} 
-                            animate={{ opacity: 1, scale: 1, y: 0 }} 
-                            exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                            className="bg-card border border-border rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative"
+                {actingRequest && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/50 backdrop-blur-xs" onClick={() => setActingRequest(null)}>
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="bg-card border border-border rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4"
                             onClick={(e) => e.stopPropagation()}
                         >
-                            {/* Close button */}
-                            <button onClick={() => setSelectedRequest(null)} className="absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-full hover:bg-muted transition-colors">
-                                <X className="w-5 h-5" />
-                            </button>
-
-                            {/* Header info */}
-                            <div className="flex items-center gap-3 mb-5">
-                                <span className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedRequest.source === "ivr" ? "bg-secondary/15 text-secondary" : "bg-primary/10 text-primary"}`}>
-                                    {selectedRequest.source === "ivr" ? <Phone className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
-                                </span>
-                                <div>
-                                    <h3 className="font-head font-extrabold text-lg leading-tight">{selectedRequest.caller}</h3>
-                                    <p className="text-xs text-muted-foreground mt-0.5">
-                                        {new Date(selectedRequest.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                        {" · "}<span className="capitalize">{selectedRequest.source}</span>
-                                    </p>
-                                </div>
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-head font-bold text-lg text-foreground">Accept & Schedule Consultation</h3>
+                                <button onClick={() => setActingRequest(null)} className="text-muted-foreground hover:text-foreground">
+                                    <X className="w-5 h-5" />
+                                </button>
                             </div>
 
-                            {/* Urgency Badge */}
-                            <div className="flex flex-wrap gap-2 mb-6">
-                                <Badge className={`${URGENCY_META[selectedRequest.urgency]?.badge || URGENCY_META.soon.badge} rounded-full gap-1.5 font-bold border-0 px-3.5 py-1 text-xs`}>
-                                    {selectedRequest.urgency.toUpperCase()}
-                                </Badge>
-                                {selectedRequest.flagged && (
-                                    <Badge className="bg-destructive text-destructive-foreground rounded-full gap-1.5 font-bold border-0 px-3 py-1 text-xs">
-                                        🚨 RED FLAG TRIGGERED
-                                    </Badge>
-                                )}
+                            <p className="text-xs text-muted-foreground">
+                                Add an optional appointment time, doctor note, or clinic instructions that will be displayed to the patient on their tracking page.
+                            </p>
+
+                            <div>
+                                <Label className="text-xs font-semibold">Doctor Instructions / Visit Slot</Label>
+                                <Textarea
+                                    rows={3}
+                                    placeholder="e.g. Appointment scheduled today at 3:00 PM. Please bring past medical reports."
+                                    value={actionNote}
+                                    onChange={(e) => setActionNote(e.target.value)}
+                                    className="mt-1 text-xs rounded-xl bg-background"
+                                />
                             </div>
 
-                            {/* Provider Cascade & Latency Metrics */}
-                            <div className="bg-muted/40 border border-border/70 rounded-2xl p-3.5 mb-5 grid grid-cols-3 gap-2 text-xs">
-                                <div>
-                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">ASR ENGINE</span>
-                                    <span className="font-bold text-foreground text-xs mt-0.5 block">{ASR_LABELS[selectedRequest.asr_provider] || `⚡ ${selectedRequest.asr_provider || "Groq Whisper"}`}</span>
-                                </div>
-                                <div>
-                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">TRIAGE ENGINE</span>
-                                    <span className="font-bold text-foreground text-xs mt-0.5 block">{LLM_LABELS[selectedRequest.llm_provider] || (selectedRequest.flagged ? "🛡️ Safety Gate (Red-Flag)" : `🧠 ${selectedRequest.llm_provider || "Groq Llama 3.3"}`)}</span>
-                                </div>
-                                <div>
-                                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase tracking-wider">LATENCY</span>
-                                    <span className="font-bold text-emerald-600 dark:text-emerald-400 text-xs mt-0.5 block">⏱️ {selectedRequest.latency_ms || 280} ms</span>
-                                </div>
-                            </div>
-
-                            {/* Transcript Card */}
-                            <div className="space-y-5">
-                                <div>
-                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Voice Transcript ({selectedRequest.language.toUpperCase()})</h4>
-                                    <div className="bg-muted/45 border border-border/60 rounded-2xl p-4 italic text-foreground/90 text-sm">
-                                        "{selectedRequest.transcript}"
-                                    </div>
-                                </div>
-
-                                {/* Symptoms & Red Flags */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Symptoms</h4>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {selectedRequest.symptoms && selectedRequest.symptoms.length > 0 ? (
-                                                selectedRequest.symptoms.map((s, idx) => (
-                                                    <span key={idx} className="bg-primary/10 text-primary text-xs font-medium px-2.5 py-0.5 rounded-full">{s}</span>
-                                                ))
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground italic">None extracted</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Red Flags</h4>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {selectedRequest.red_flags && selectedRequest.red_flags.length > 0 ? (
-                                                selectedRequest.red_flags.map((rf, idx) => (
-                                                    <span key={idx} className="bg-destructive/15 text-destructive text-xs font-bold px-2.5 py-0.5 rounded-full">🚨 {rf}</span>
-                                                ))
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground italic">None detected</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Advice Card */}
-                                <div>
-                                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Spoken Triage Advice</h4>
-                                    <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 text-foreground/90 text-sm leading-relaxed font-medium">
-                                        {selectedRequest.spoken || selectedRequest.advice}
-                                    </div>
-                                </div>
-
-                                {/* Medical Disclaimer */}
-                                <div className="bg-muted/50 border border-border/85 rounded-xl p-3 flex gap-2">
-                                    <AlertTriangle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                                    <p className="text-[10px] text-muted-foreground leading-normal">
-                                        Disclaimer: Triage guidance only. All triage decisions must be clinically reviewed and validated by a physician.
-                                    </p>
-                                </div>
-
-                                {/* Action Buttons */}
-                                <div className="flex gap-2 pt-2">
-                                    <Button onClick={() => { toast.success("Marked as reviewed"); setSelectedRequest(null); }} className="flex-1 rounded-full h-11 font-bold bg-primary hover:bg-primary/90">
-                                        Mark Reviewed
-                                    </Button>
-                                    {selectedRequest.urgency === "emergency" && (
-                                        <Button onClick={() => toast.info("Ambulance dispatched (simulated 108 handoff)")} variant="destructive" className="rounded-full h-11 px-5 font-bold flex items-center gap-1.5">
-                                            <Activity className="w-4 h-4" /> Dispatch 108
-                                        </Button>
-                                    )}
-                                    <Button variant="outline" onClick={() => setSelectedRequest(null)} className="rounded-full h-11 font-bold">
-                                        Close
-                                    </Button>
-                                </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button variant="ghost" size="sm" onClick={() => setActingRequest(null)} className="rounded-full text-xs font-semibold">
+                                    Cancel
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    disabled={updatingStatus}
+                                    onClick={() => handleUpdateStatus(actingRequest.id || actingRequest._id, "accepted", actionNote)}
+                                    className="rounded-full text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-5"
+                                >
+                                    {updatingStatus ? "Accepting..." : "Confirm & Send to Patient"}
+                                </Button>
                             </div>
                         </motion.div>
                     </div>
                 )}
             </AnimatePresence>
 
-            {/* Mandatory disclaimer footer */}
-            <footer className="max-w-7xl mx-auto px-6 py-4 border-t border-border">
-                <p className="text-xs text-muted-foreground text-center">
-                    ⚠️ SwasthVaani provides triage guidance only — not a medical diagnosis. All cases require professional clinical review. Always consult a qualified health professional.
-                </p>
-            </footer>
+            {/* Area Case Detail Modal */}
+            <AnimatePresence>
+                {selectedAreaItem && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/50 backdrop-blur-xs" onClick={() => setSelectedAreaItem(null)}>
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="bg-card border border-border rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 md:p-8 shadow-2xl relative space-y-4"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <button onClick={() => setSelectedAreaItem(null)} className="absolute top-5 right-5 text-muted-foreground hover:text-foreground">
+                                <X className="w-5 h-5" />
+                            </button>
+
+                            <h3 className="font-head font-bold text-xl">Area Triage Case Details</h3>
+                            <div className="text-xs space-y-2">
+                                <p><b>Caller:</b> {selectedAreaItem.caller}</p>
+                                <p><b>Language:</b> {selectedAreaItem.language.toUpperCase()}</p>
+                                <p><b>Urgency:</b> <span className="uppercase font-bold">{selectedAreaItem.urgency}</span></p>
+                                <p><b>Transcript:</b> "{selectedAreaItem.transcript}"</p>
+                                <p><b>Advice:</b> {selectedAreaItem.advice}</p>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+// -----------------------------------------------------------------------
+// Phase 5: Super Admin Portal View
+// -----------------------------------------------------------------------
+
+function SuperAdminDashboard({ user, onLogout }) {
+    const [adminStats, setAdminStats] = useState(null);
+    const [providers, setProviders] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState("providers"); // providers | triage_feed
+    const [triageFeed, setTriageFeed] = useState([]);
+
+    const loadAdminData = async () => {
+        setLoading(true);
+        try {
+            const [statRes, provRes, triageRes] = await Promise.all([
+                api.get("/admin/stats"),
+                api.get("/admin/providers"),
+                api.get("/triage/requests")
+            ]);
+            setAdminStats(statRes.data);
+            setProviders(provRes.data || []);
+            setTriageFeed(triageRes.data || []);
+        } catch (e) {
+            console.error("Admin load error:", e);
+            toast.error("Could not load administrative data");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadAdminData();
+    }, []);
+
+    const handleUpdateProviderStatus = async (providerId, newStatus) => {
+        try {
+            const { data } = await api.patch(`/admin/providers/${providerId}/status`, { status: newStatus });
+            toast.success(`Provider status updated to ${newStatus.toUpperCase()}`);
+            setProviders(providers.map(p => (p.id === providerId || p._id === providerId ? { ...p, status: newStatus } : p)));
+        } catch (e) {
+            toast.error("Failed to update provider status");
+        }
+    };
+
+    const handleDeleteProvider = async (providerId) => {
+        if (!window.confirm("Are you sure you want to remove this provider account?")) return;
+        try {
+            await api.delete(`/admin/providers/${providerId}`);
+            toast.success("Provider account removed");
+            setProviders(providers.filter(p => p.id !== providerId && p._id !== providerId));
+        } catch (e) {
+            toast.error("Could not delete provider");
+        }
+    };
+
+    return (
+        <div className="min-h-screen grain-bg" data-testid="superadmin-dashboard">
+            {/* Header */}
+            <header className="sticky top-0 z-30 bg-zinc-950 text-white border-b border-zinc-800">
+                <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500 text-zinc-950 flex items-center justify-center font-bold">
+                            <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="font-head font-extrabold tracking-tight">SwasthVaani SuperAdmin</span>
+                                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px] font-bold">
+                                    Root Access
+                                </Badge>
+                            </div>
+                            <span className="text-[11px] text-zinc-400">National Health Directory & Governance</span>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={loadAdminData} className="rounded-full text-xs font-semibold text-zinc-300 hover:text-white">
+                            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={onLogout} className="rounded-full text-xs font-semibold border-zinc-700 text-zinc-200 hover:bg-zinc-800">
+                            <LogOut className="w-3.5 h-3.5 mr-1.5" /> Logout
+                        </Button>
+                    </div>
+                </div>
+            </header>
+
+            <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+                {/* Aggregate System Stats */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatCard
+                        testid="admin-stat-clinics"
+                        icon={Building2}
+                        label="Registered Clinics"
+                        value={adminStats?.providers?.clinics ?? providers.filter(p => p.type === "clinic").length}
+                        tone="bg-primary/10 text-primary"
+                    />
+                    <StatCard
+                        testid="admin-stat-ngos"
+                        icon={HeartHandshakeIcon}
+                        label="Registered NGOs"
+                        value={adminStats?.providers?.ngos ?? providers.filter(p => p.type === "ngo").length}
+                        tone="bg-secondary/15 text-secondary"
+                    />
+                    <StatCard
+                        testid="admin-stat-requests"
+                        icon={Stethoscope}
+                        label="Direct Patient Bookings"
+                        value={adminStats?.patient_requests?.total ?? 0}
+                        tone="bg-blue-500/15 text-blue-600"
+                    />
+                    <StatCard
+                        testid="admin-stat-triage"
+                        icon={Activity}
+                        label="Global Triage Logs"
+                        value={adminStats?.triage?.total ?? triageFeed.length}
+                        tone="bg-amber-500/15 text-amber-600"
+                    />
+                </div>
+
+                {/* Navigation Tabs */}
+                <div className="flex bg-muted/80 p-1 rounded-2xl border border-border/60 w-fit">
+                    <button
+                        onClick={() => setActiveTab("providers")}
+                        className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${
+                            activeTab === "providers" ? "bg-card text-foreground shadow-xs border border-border/80" : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Manage Clinics & NGOs ({providers.length})
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("triage_feed")}
+                        className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${
+                            activeTab === "triage_feed" ? "bg-card text-foreground shadow-xs border border-border/80" : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Global Triage Feed ({triageFeed.length})
+                    </button>
+                </div>
+
+                {/* Providers Table Tab */}
+                {activeTab === "providers" && (
+                    <div className="bg-card border border-border/80 rounded-2xl overflow-hidden shadow-xs">
+                        <div className="p-6 border-b border-border/60 flex items-center justify-between">
+                            <div>
+                                <h3 className="font-head font-bold text-lg text-foreground">Registered Healthcare Facilities & NGOs</h3>
+                                <p className="text-xs text-muted-foreground">Approve new registrations, manage status, and monitor consultation load.</p>
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-muted/60 text-muted-foreground font-semibold uppercase text-[10px] tracking-wider border-b border-border/60">
+                                    <tr>
+                                        <th className="py-3.5 px-6">Facility Name</th>
+                                        <th className="py-3.5 px-4">Type</th>
+                                        <th className="py-3.5 px-4">Specialties</th>
+                                        <th className="py-3.5 px-4">PIN / City</th>
+                                        <th className="py-3.5 px-4">Total Referrals</th>
+                                        <th className="py-3.5 px-4">Status</th>
+                                        <th className="py-3.5 px-6 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/60">
+                                    {providers.map((p, idx) => {
+                                        const isApproved = p.status === "approved";
+                                        const isDeactivated = p.status === "deactivated";
+
+                                        return (
+                                            <tr key={p.id || p._id || idx} className="hover:bg-muted/30 transition-colors">
+                                                <td className="py-4 px-6">
+                                                    <p className="font-bold text-foreground text-sm">{p.name}</p>
+                                                    <p className="text-[11px] text-muted-foreground">{p.email} · {p.phone || "No phone"}</p>
+                                                    {p.qualification && (
+                                                        <p className="text-[10px] text-muted-foreground italic mt-0.5">{p.qualification}</p>
+                                                    )}
+                                                </td>
+
+                                                <td className="py-4 px-4">
+                                                    <Badge variant="outline" className="text-[10px] uppercase font-bold py-0.5">
+                                                        {p.type === "ngo" ? "NGO" : p.facility_type || "Clinic"}
+                                                    </Badge>
+                                                </td>
+
+                                                <td className="py-4 px-4 max-w-xs">
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {(p.specialties || ["General Physician"]).slice(0, 3).map((s, si) => (
+                                                            <span key={si} className="bg-primary/10 text-primary text-[10px] px-2 py-0.5 rounded-full font-semibold">
+                                                                {s}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </td>
+
+                                                <td className="py-4 px-4 font-semibold text-foreground">
+                                                    {p.pincode || "—"}
+                                                </td>
+
+                                                <td className="py-4 px-4 font-bold text-foreground">
+                                                    {p.total_requests || 0}
+                                                </td>
+
+                                                <td className="py-4 px-4">
+                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                                        isApproved ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                                                            : isDeactivated ? "bg-rose-500/10 text-rose-700 border-rose-500/30"
+                                                                : "bg-amber-500/15 text-amber-700 border-amber-500/30"
+                                                    }`}>
+                                                        {p.status?.toUpperCase() || "PENDING"}
+                                                    </span>
+                                                </td>
+
+                                                <td className="py-4 px-6 text-right">
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        {!isApproved && (
+                                                            <Button
+                                                                size="sm"
+                                                                onClick={() => handleUpdateProviderStatus(p.id || p._id, "approved")}
+                                                                className="rounded-full h-7 px-3 text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                                                            >
+                                                                Approve
+                                                            </Button>
+                                                        )}
+                                                        {isApproved && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => handleUpdateProviderStatus(p.id || p._id, "deactivated")}
+                                                                className="rounded-full h-7 px-3 text-[11px] font-bold text-amber-600 border-amber-300 hover:bg-amber-50"
+                                                            >
+                                                                Deactivate
+                                                            </Button>
+                                                        )}
+                                                        {isDeactivated && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => handleUpdateProviderStatus(p.id || p._id, "approved")}
+                                                                className="rounded-full h-7 px-3 text-[11px] font-bold text-emerald-600 border-emerald-300"
+                                                            >
+                                                                Reactivate
+                                                            </Button>
+                                                        )}
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            onClick={() => handleDeleteProvider(p.id || p._id)}
+                                                            className="rounded-full h-7 w-7 p-0 text-rose-600 hover:bg-rose-50"
+                                                            title="Delete Provider"
+                                                        >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        </Button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* Global Triage Feed Tab */}
+                {activeTab === "triage_feed" && (
+                    <div className="bg-card border border-border/80 rounded-2xl p-6 shadow-xs">
+                        <h3 className="font-head font-bold text-lg text-foreground mb-4">Global Health Triage Activity</h3>
+                        <div className="space-y-3">
+                            {triageFeed.map((item, idx) => {
+                                const urgencyMeta = URGENCY_META[item.urgency] || URGENCY_META.soon;
+                                return (
+                                    <div key={idx} className="bg-background/60 border border-border/60 rounded-xl p-4 flex items-center justify-between text-xs">
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-bold text-foreground">{item.caller}</span>
+                                                <Badge className={`${urgencyMeta.badge} text-[10px] font-bold py-0.5 border-0`}>
+                                                    {urgencyMeta.label}
+                                                </Badge>
+                                                {item.suggested_specialty && (
+                                                    <span className="text-primary font-semibold text-[10px]">
+                                                        · {item.suggested_specialty}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-muted-foreground mt-1 italic">"{item.transcript}"</p>
+                                        </div>
+                                        <div className="text-right text-muted-foreground text-[11px]">
+                                            {new Date(item.created_at).toLocaleString()}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </main>
+        </div>
+    );
+}
+
+function HeartHandshakeIcon(props) {
+    return <Users {...props} />;
+}
+
+function StatCard({ icon: Icon, label, value, tone, testid }) {
+    return (
+        <div className="bg-card border border-border/80 rounded-2xl p-5 shadow-xs" data-testid={testid}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${tone}`}>
+                <Icon className="w-5 h-5" />
+            </div>
+            <p className="font-head font-extrabold text-3xl tracking-tight text-foreground">{value}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
         </div>
     );
 }

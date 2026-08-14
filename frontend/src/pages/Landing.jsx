@@ -88,15 +88,20 @@ export default function Landing() {
                             <span className="text-[11px] text-muted-foreground font-medium">Voice Triage for Rural India</span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        <Link to="/my-requests" data-testid="nav-requests-link">
+                            <Button variant="ghost" className="rounded-full font-bold text-xs sm:text-sm hover:bg-primary/10 hover:text-primary">
+                                My Requests
+                            </Button>
+                        </Link>
                         <Link to="/dashboard" data-testid="nav-clinic-link">
-                            <Button variant="ghost" className="rounded-full font-bold text-sm hidden sm:inline-flex hover:bg-primary/10 hover:text-primary">
-                                Clinic Portal
+                            <Button variant="ghost" className="rounded-full font-bold text-xs sm:text-sm hidden sm:inline-flex hover:bg-primary/10 hover:text-primary">
+                                Clinic & NGO Portal
                             </Button>
                         </Link>
                         <Link to="/speak" data-testid="nav-speak-link">
-                            <Button className="rounded-full font-bold px-6 gradient-bg hover:opacity-95 shadow-md glow-primary text-white transition-all transform hover:-translate-y-0.5">
-                                <Sparkles className="w-4 h-4 mr-2" /> Try Voice Demo
+                            <Button className="rounded-full font-bold px-5 sm:px-6 gradient-bg hover:opacity-95 shadow-md glow-primary text-white transition-all transform hover:-translate-y-0.5 text-xs sm:text-sm">
+                                <Sparkles className="w-4 h-4 mr-2" /> Voice Triage
                             </Button>
                         </Link>
                     </div>
