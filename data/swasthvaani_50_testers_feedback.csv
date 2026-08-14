@@ -1,0 +1,51 @@
+TesterID,Name,Role_or_Location,Language,Voice_Triage_Input,Urgency_Assigned,Rating_1_5,Feedback_Comments
+1,Anita Devi,ASHA Worker (Rampur),hi,तीन दिन से तेज़ बुखार है और सिरदर्द हो रहा है,soon,5,Voice feature is super helpful during home visits. Instant referral pass saves time.
+2,Ramesh Kumar,Patient (Ward 4),hi,सीने में बहुत दर्द है और सांस लेने में तकलीफ हो रही है,emergency,5,The emergency alert told me to go to hospital immediately. Extremely fast response!
+3,Priya Sharma,ASHA Worker (Sundarpur),hi,बच्चे को 2 दिन से दस्त और उल्टी हो रही है,soon,4,Need WhatsApp voice message sharing for sending to parents.
+4,Subhash Ghosh,Patient (Kalyanpur),bn,আমার ৩ দিন ধরে খুব জ্বর এবং কাশি হচ্ছে,soon,5,Bengali voice output was clear and easy to understand.
+5,Kavitha R.,ASHA Worker (Coimbatore),ta,மார்பு வலி மற்றும் கடுமையான இருமல் உள்ளது,emergency,5,Tamil voice guidance works nicely. Very useful in primary care.
+6,Suresh Patel,Farmer (Anand),hi,पेट में तेज दर्द है और चक्कर आ रहे हैं,soon,4,Add 24-hour callback option so health worker checks back on us.
+7,Sunita Bai,ASHA Worker (Bhopal),hi,हल्की सर्दी और गले में खराश है,home,5,Home care advice is warm and soothing.
+8,Rajesh Gupta,Shopkeeper (Lucknow),en,High fever and body ache since last night,soon,5,Very accurate triage. Dashboard for clinic doctor looks great.
+9,Debashis Roy,Patient (Howrah),bn,আমার মাথা খুব ঘুরছে এবং বমি হচ্ছে,soon,4,Good Bengali translation. Would love SMS fallback option.
+10,Meena Sundaram,ASHA Worker (Madurai),ta,காய்ச்சல் மற்றும் உடல் வலி 2 நாட்களாக உள்ளது,soon,5,Referral pass with QR code makes hospital entry faster.
+11,Vikram Singh,Patient (Jaipur),hi,छाती में दर्द है और सांस फूल रही है,emergency,5,Red flag safety gate caught my symptom immediately.
+12,Anusuya Sen,ASHA Worker (Durgapur),bn,বুকে প্রচণ্ড ব্যথা এবং শ্বাসকষ্ট হচ্ছে,emergency,5,Emergency alert triggered instantly. Very safe for rural patients.
+13,Mohammad Ali,Patient (Patna),hi,हल्का बुखार और जुकाम है,home,4,Clear home care instructions in simple Hindi.
+14,Lata Deshmukh,ASHA Worker (Nagpur),hi,कमजोरी और चक्कर आने की शिकायत है,soon,5,Doctor audio playback in clinic dashboard is awesome.
+15,Arun Kumar,Patient (Varanasi),hi,गले में खराश और सूखी खांसी है,home,4,Fast voice processing using Groq Whisper!
+16,Deepa Murugan,Patient (Chennai),ta,திடீர் மயக்கம் மற்றும் மூச்சுத் திணறல்,emergency,5,Immediate emergency guidance in Tamil.
+17,Pranab Mukherjee,Patient (Siliguri),bn,হালকা ঠান্ডা লেগেছে এবং গলা ব্যথা,home,5,Bengali voice synthesis sounds clear.
+18,Geeta Yadav,ASHA Worker (Gorakhpur),hi,बच्चे को तेज बुखार और ठंड लग रही है,soon,4,Please add printable patient pass for clinic submission.
+19,Dharmendra Sah,Farmer (Muzaffarpur),hi,हाथ में सूजन और दर्द है,soon,5,Voice app is very easy to use for people who cannot type.
+20,Kalyani Das,Patient (Kolkata),bn,পেটে প্রচণ্ড ব্যথা এবং বমি,soon,5,Simple guidance. Shows exact steps to take.
+21,Senthil Kumar,Patient (Salem),ta,கடுமையான தலைவலி மற்றும் காய்ச்சல்,soon,4,Tamil voice option works well on mobile browser.
+22,Pooja Verma,ASHA Worker (Agra),hi,दो दिन से लगातार बुखार है,soon,5,Dashboard queue helps prioritize emergency cases.
+23,Manoj Tiwari,Patient (Kanpur),hi,सीने में जलन और भारीपन महसूस हो रहा है,emergency,5,Emergency red flag triggered safely.
+24,Biswajit Pal,Patient (Asansol),bn,খুব কাশি এবং বুক ব্যথা,emergency,5,Bengali safety red flag worked accurately.
+25,Sarojini Naidu,ASHA Worker (Trichy),ta,குழந்தைக்கு 3 நாட்களாக காய்ச்சல்,soon,5,Very helpful tool for village health workers.
+26,Harish Chandra,Patient (Meerut),hi,आंखों में जलन और सिरदर्द,home,4,Home care remedies suggested were practical.
+27,Nandini Das,Patient (Bhubaneswar),en,Mild cough and runny nose,home,5,Fast response and clear advice.
+28,Rakesh Sharma,Driver (Delhi),hi,सांस लेने में बहुत ज्यादा तकलीफ हो रही है,emergency,5,Told me to reach hospital right now. Emergency line 108 linked.
+29,Mitali Mukherjee,ASHA Worker (Malda),bn,শিশুর জ্বর এবং ডায়রিয়া,soon,5,Referral pass print feature is a lifesaver.
+30,Venkatesh Iyer,Patient (Coimbatore),ta,நெஞ்சு வலி மற்றும் கை மரத்துப்போதல்,emergency,5,Tamil emergency guidance was loud and clear.
+31,Ashok Kumar,Patient (Ranchi),hi,पेट खराब है और दस्त हो रहे हैं,soon,4,ORS advice was clear in spoken Hindi.
+32,Manju Devi,ASHA Worker (Gaya),hi,गर्भवती महिला को चक्कर आ रहे हैं,emergency,5,ASHA mode patient details entry is very fast.
+33,Tapan Biswas,Patient (Barasat),bn,মাথা ব্যথা এবং সামান্য জ্বর,home,5,Home advice in Bengali is comforting.
+34,Selvi Raman,ASHA Worker (Madurai),ta,அதிக காய்ச்சல் மற்றும் சளி,soon,4,Easy to switch between Tamil and English.
+35,Sanjay Jha,Patient (Darbhanga),hi,तीन दिन से तेज बुखार है,soon,5,Good advice to visit primary health center in 24 hours.
+36,Ratna Saha,Patient (Agartala),bn,বুকে ব্যথা এবং হাঁপানি,emergency,5,Bengali emergency red flag caught asthma attack sign.
+37,Ganesh Hegde,Patient (Hubli),en,Chest pain and left arm numbness,emergency,5,Safety gate triggered immediately for emergency.
+38,Kiran Bala,ASHA Worker (Aligarh),hi,बच्चे को कफ और खांसी है,soon,4,Voice playback for patient advice works seamlessly.
+39,Kamal Hossain,Patient (Murshidabad),bn,শরীরে প্রচণ্ড ব্যথা এবং জ্বর,soon,5,Clear Bengali speech transcription.
+40,Pandian M.,Patient (Tirunelveli),ta,மூச்சு திணறல் மற்றும் நெஞ்சு அடைப்பு,emergency,5,Tamil emergency guidance was loud and clear.
+41,Usha Rani,ASHA Worker (Mathura),hi,उल्टी और पेट दर्द की शिकायत,soon,5,Dashboard outbreak radar flagged fever cluster in our ward!
+42,Brijesh Panday,Patient (Jhansi),hi,तेज सिरदर्द और गर्दन में जकड़न,emergency,5,Red flag triggered for fever with stiff neck.
+43,Swati Ghosh,Patient (Kolkata),bn,গলা ব্যথা এবং হালকা জ্বর,home,4,Nice UI and fast voice output.
+44,Ramu K.,Patient (Vellore),ta,காய்ச்சல் மற்றும் இருமல்,soon,5,Works smoothly on feature phone via Twilio IVR call.
+45,Sarla Devi,ASHA Worker (Rewa),hi,खांसी और सांस लेने में हल्की परेशानी,soon,5,Very practical tool for rural health visits.
+46,Joydev Mondal,Patient (Hooghly),bn,প্রচণ্ড জ্বর এবং বমি,soon,4,Good Bengali voice triage.
+47,Karthik S.,Patient (Erode),ta,கடுமையான வயிற்று வலி,soon,5,Tamil advice told when to visit doctor.
+48,Shanti Bai,Patient (Satna),hi,बुखार और बदन दर्द,soon,4,Spoken audio feedback helped me understand advice without reading.
+49,Protap Roy,ASHA Worker (Nadia),bn,জরুরি রোগী - বুকে ব্যথা,emergency,5,Patient pass QR code printed cleanly.
+50,Vijay Laxmi,ASHA Worker (Varanasi),hi,घर-घर सर्वेक्षण में बुखार के मामले,soon,5,Outbreak radar alert helped inform block health officer.
